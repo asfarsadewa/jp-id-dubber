@@ -1,0 +1,16 @@
+{
+  "slug": "episode-01-pilot",
+  "series": "Your series",
+  "episode": "01",
+  "source": "input/episode-01.mp4",
+  "scope": "pilot",
+  "scenes": [
+    {"id": "dialogue-01", "start": 120.0, "end": 180.0, "mode": "dub", "description": "A representative dialogue scene, excluding the opening song."}
+  ],
+  "series_context": "Describe only confirmed character relationships and setting.",
+  "glossary": {},
+  "style": "Natural Bahasa Indonesia for classic television animation; conversational, clear and dramatic. Distinct stable character voices. No spoken director notes.",
+  "models": {"scribe": "scribe_v2", "transcribe": "gpt-4o-transcribe", "adapt": "gpt-6.1-sol", "tts": "gemini-3.8-flash-tts", "listen": "gpt-audio-1.5"},
+  "voice_workers": 3,
+  "separator": {"checkout": "third_party/eluate", "checkpoint": "models/bandit-v2-multi.ckpt", "device": "cuda", "batch_size": 2}
+}

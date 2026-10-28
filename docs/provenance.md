@@ -1,0 +1,12 @@
+# Dependencies and provider contracts
+
+This repository's tooling is MIT licensed. Source episodes, weights and provider outputs are not part of that code license or this public tree.
+
+- [OpenAI background mode](https://developers.openai.com/api/docs/guides/background) provides saved response IDs for asynchronous adaptation. [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs) supplies the draft JSON contract. Semantic/coverage validation remains local.
+- [Gemini speech generation](https://ai.google.dev/gemini-api/docs/speech-generation) documents exact transcript text, separate `speech_metadata`, voices and Interactions. The adapter uses `gemini-3.8-flash-tts`, revision `2026-05-20`, and validates returned mono WAVs. It derives from the audition helper; no global skill is imported.
+- [ElevenLabs speech-to-text](https://elevenlabs.io/docs/api-reference/speech-to-text/convert) supplies Japanese words, timestamps and anonymous diarization. Labels require editorial identity review.
+- [ELUATE](https://github.com/anaxoniclabs/ELUATE) is MIT-licensed code, fetched at `1b40cd9deae8fb0831b2550d6d54a517aba8731d`. Its licenses/notices remain in the ignored checkout. We retain music/effects through its internal streaming API. The Windows patch handles the absent POSIX `resource` module with `psutil`.
+- [Bandit v2](https://github.com/kwatcharasupat/bandit-v2) is the cinematic separator. The [multilingual checkpoint record](https://zenodo.org/records/12701995) supplies weights; ELUATE's registry identifies CC-BY-SA 4.0. We download rather than redistribute weights. Consult upstream model/data notices. Verified SHA-256: `abcfccf65446752a057f4a302c941479a54b7560ebf8d7bca039d2ea98e64cfc`.
+- [FFmpeg](https://ffmpeg.org/) performs fitting, mixing, encoding and decoding. It comes from the user's environment and is not bundled.
+
+Base dependencies are locked separately from the optional GPU stack. First-time downloads and torch selection are explicit. Availability can change; changing a tested model/contract needs deliberate updates and audition rather than an unrecorded fallback.
