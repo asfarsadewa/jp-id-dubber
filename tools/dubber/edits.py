@@ -6,7 +6,7 @@ import math
 import subprocess
 from .core import need, read, write
 
-VERSION = 2
+VERSION = 3
 RATE = 48000
 
 
@@ -38,7 +38,7 @@ def audit_frame_ticks(frames, fps, time_base, origin):
 
 
 def selected_audio_bounds(source, audio, origin):
-    """Audit a:0 presentation packets, excluding signalled codec padding."""
+    """Intersect packet presentation bounds with decoder-trimmed sample bounds."""
     time_base = Fraction(audio["time_base"])
     rate = int(audio["sample_rate"])
     packets = json.loads(
@@ -67,31 +67,67 @@ def selected_audio_bounds(source, audio, origin):
             and packet["duration"] > 0,
             "Cannot establish selected audio coverage from packet timestamps/durations",
         )
-        side = [
-            s
-            for s in packet.get("side_data_list", [])
-            if s.get("side_data_type") == "Skip Samples"
-        ]
-        skip = sum(int(s.get("skip_samples", 0)) for s in side)
-        discard = sum(int(s.get("discard_padding", 0)) for s in side)
-        start = max(
-            Fraction(0), packet["pts"] * time_base - origin + Fraction(skip, rate)
+        spans.append(
+            (
+                packet["pts"] * time_base - origin,
+                (packet["pts"] + packet["duration"]) * time_base - origin,
+            )
         )
-        end = (
-            (packet["pts"] + packet["duration"]) * time_base
+    need(bool(spans), "Selected audio stream has no presentable packets")
+    frames = json.loads(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_frames",
+                "-show_entries",
+                "frame=best_effort_timestamp,nb_samples",
+                "-of",
+                "json",
+                str(source),
+            ],
+            encoding="utf-8",
+        )
+    )["frames"]
+    need(
+        bool(frames)
+        and all(
+            isinstance(f.get("best_effort_timestamp"), int)
+            and isinstance(f.get("nb_samples"), int)
+            and f["nb_samples"] > 0
+            for f in frames
+        ),
+        "Cannot establish selected audio coverage from decoded frame samples",
+    )
+    # Packet durations may already exclude discard padding (FFmpeg 9 AAC),
+    # while older decoders may expose padded final frames. Intersect both
+    # presentation views instead of subtracting codec padding a second time.
+    start = max(
+        Fraction(0),
+        min(s[0] for s in spans),
+        min(f["best_effort_timestamp"] * time_base - origin for f in frames),
+    )
+    end = min(
+        max(s[1] for s in spans),
+        max(
+            f["best_effort_timestamp"] * time_base
             - origin
-            - Fraction(discard, rate)
-        )
-        if end > start:
-            spans.append((start, end))
-    need(bool(spans), "Selected audio stream has no presentable samples")
+            + Fraction(f["nb_samples"], rate)
+            for f in frames
+        ),
+    )
+    need(end > start, "Selected audio stream has no presentable samples")
     return {
         "index": audio["index"],
         "time_base": str(time_base),
-        "start": str(min(s[0] for s in spans)),
-        "end": str(max(s[1] for s in spans)),
+        "start": str(start),
+        "end": str(end),
         "sample_rate": rate,
         "padding_accounted": True,
+        "padding_audit": "decoded-frames-and-packet-bounds",
     }
 
 

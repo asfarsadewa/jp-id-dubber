@@ -1,10 +1,12 @@
 """Selected-stream clocks and event compatibility, with synthetic media only."""
 
 from fractions import Fraction
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -15,7 +17,7 @@ from dubber.editorial import prepare, review
 from dubber.voices import generate
 from dubber.audio import fit
 from dubber.render import render, verify
-from dubber.edits import audit_frame_ticks
+from dubber.edits import audit_frame_ticks, selected_audio_bounds
 
 
 def source_project(root, video=6, audio=6, suffix="mp4", scope="full", fps="24"):
@@ -87,6 +89,52 @@ def finish_passthrough(project):
 
 
 class StreamBoundaryRegressions(unittest.TestCase):
+    def test_codec_padding_is_accounted_once_across_ffprobe_versions(self):
+        audio = {"index": 1, "time_base": "1/48000", "sample_rate": "48000"}
+        for packet_duration, decoded_samples, discard in [
+            (256, 256, 768),  # New AAC: packet and decoded frame already trimmed.
+            (1024, 256, 768),  # Decoder trims padding in a full codec packet.
+            (256, 1024, 0),  # Legacy AAC decoder exposes padded final samples.
+        ]:
+            packets = [
+                {
+                    "pts": -1024,
+                    "duration": 1024,
+                    "side_data_list": [
+                        {"side_data_type": "Skip Samples", "skip_samples": 1024}
+                    ],
+                },
+                {"pts": 0, "duration": 1024},
+                {
+                    "pts": 1024,
+                    "duration": packet_duration,
+                    "side_data_list": [
+                        {"side_data_type": "Skip Samples", "discard_padding": discard}
+                    ],
+                },
+            ]
+            frames = [
+                {"best_effort_timestamp": 0, "nb_samples": 1024},
+                {"best_effort_timestamp": 1024, "nb_samples": decoded_samples},
+            ]
+            with (
+                self.subTest(
+                    packet_duration=packet_duration, decoded_samples=decoded_samples
+                ),
+                patch(
+                    "dubber.edits.subprocess.check_output",
+                    side_effect=[
+                        json.dumps({"packets": packets}),
+                        json.dumps({"frames": frames}),
+                    ],
+                ),
+            ):
+                bounds = selected_audio_bounds(
+                    Path("synthetic.mp4"), audio, Fraction(0)
+                )
+                self.assertEqual(Fraction(bounds["start"]), 0)
+                self.assertEqual(Fraction(bounds["end"]), Fraction(1280, 48000))
+
     def test_pilot_before_the_audio_tail_remains_supported(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = source_project(Path(tmp), video=5.5, audio=6, scope="pilot")
