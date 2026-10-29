@@ -14,6 +14,8 @@ Paths inside a config resolve from the repo root. Default folders are `work/<slu
 
 `scope` is `pilot` or `full`. Each scene has `id`, absolute source `start`/`end`, `mode` (`dub` or `passthrough`) and a description. Optional `contains_song: true` requires passthrough. Full scope must cover the source without gaps, in order. Split theme/ending songs from dialogue; leave original singing in the single final audio mix. For long episodes use short scenes so review, ASR and adaptation stay bounded. The adapter limits an adaptation request to 240 seconds.
 
+Prepare resolves requested boundaries once onto the actual source frame grid. `edit-timeline.json` records requested/resolved source ranges, frame counts, and global output frame/sample offsets. Audio extraction, mixing, captions and picture use this same timeline. Source-unit times refer to the resolved extracted scene, whose start may differ from the requested start by less than one frame. Adjacent full-episode coverage encodes the continuous picture once; disjoint pilot excerpts select exact frame ranges and receive one global output clock. The exporter currently requires constant frame timing and a video origin matching the media origin; prepare rejects unsupported sources before paid work. Normalize a separate source copy deliberately if needed.
+
 Before paid work, inspect status and uncertain/pending receipts. Completed caches can be reused without keys. There is no paid `all` command. A configured model is never silently replaced.
 
 ## Prepare and review Japanese
@@ -23,7 +25,7 @@ python tools/dub.py --config local/episode-01-pilot.json prepare
 python tools/dub.py --config local/episode-01-pilot.json transcribe --submit
 ```
 
-Prepare extracts each scene's 48 kHz stereo WAV, an ASR MP3, source identity, probe data and contact sheet. It is offline. Transcribe makes content-cached Scribe and independent ASR requests only for dub scenes. Inspect `scenes/<id>/scribe.json`, `independent.json` and `units.json`; source audio and sampled original frames are authoritative. Speaker labels can merge characters or split one person. Listen to bounded source passages and inspect corresponding video when a name, command, relationship or utterance edge is uncertain.
+Prepare audits the frame grid and extracts each scene's exact 48 kHz stereo sample count, ASR MP3, source identity, probe data and contact sheet. It binds the resolved source path/content, requested scope, scene selection and edit timeline in its seal. A resumed stage checks those dependencies. It is offline. Transcribe makes cached Scribe and independent ASR requests only for dub scenes. Inspect `scenes/<id>/scribe.json`, `independent.json` and `units.json`; source audio and sampled original frames are authoritative. Labels can merge characters or split one person. Listen to bounded source and inspect corresponding picture for uncertain names, commands, relationships or utterance edges. Dialogue snapshots are keyed by source content, absolute time and extraction settings, so moving a scene cannot reuse its former character frames.
 
 Keep raw outputs intact. Corrections live in `work/<slug>/source-overrides.json`, an array such as:
 
@@ -35,13 +37,21 @@ Keep raw outputs intact. Corrections live in `work/<slug>/source-overrides.json`
 
 Fields `ja`, `start` and `end` are optional replacements; every edit needs a reason and valid source unit. Record confirmed terms and relationships in local config `glossary` and `series_context`. Put established character records in optional config `cast` when adapting later scenes/episodes. Never translate from burned English subtitles as the primary source.
 
+The legacy form above is `op: "replace"`. If Scribe missed an utterance entirely, insert a confirmed unit rather than editing raw `units.json`:
+
+```json
+{"op":"insert", "scene":"dialogue-01", "unit":{"id":"manual-ack","start":4.2,"end":4.9,"ja":"はい。","speaker":"manual"}, "reason":"Primary ASR missed the acknowledgment.", "evidence":"Independent ASR plus bounded source listening at +4.2 to +4.9 s."}
+```
+
+For a merged utterance, use `op: "split"`, `source_id`, and a `units` array of two or more children, plus mandatory `reason` and `evidence`. Each child has a new stable lowercase string ID, Japanese text and bounds inside the parent. Effective units are derived from raw data plus corrections; raw ASRs and unit files stay unchanged. Inserted IDs must be unique and in bounds. Raw integer IDs and corrected string IDs are both valid in `source_ids`. For a partial nonlexical omission, correct the effective unit's lexical bounds/text and explain the excluded sound, rather than both dubbing and wholly omitting the same unit.
+
 ## Adapt, assemble and seal review
 
 ```sh
 python tools/dub.py --config local/episode-01-pilot.json adapt --submit
 ```
 
-Adapt sends both ASRs, corrected source units, per-utterance contact sheets and confirmed context to the structured-output model. It returns a draft, not editorial approval. A pending background response prints its saved ID and exits with code **3**. Rerun the **same command/config** to retrieve it with GET; do not create another response or alter the prompt to evade an uncertain receipt.
+Adapt sends both ASRs, corrected units, ASR audio-event hints, per-utterance contact sheets, confirmed context, registers and pronunciation records to the model. It returns a draft, not editorial approval. The draft is saved even if semantic/timing validation stops the command, so repair it locally rather than buying another draft unnecessarily. A pending response prints its saved ID and exits with code **3**. Rerun the **same command/config** to GET it; do not alter the prompt or create another response to evade an uncertain receipt.
 
 For a long episode, adapt one scene at a time:
 
@@ -55,11 +65,13 @@ Per-scene drafts are in `scripts/<scene>.draft.json`. An edited `scripts/<scene>
 
 Review into `work/<slug>/script.json`. Each character has stable `id`, `name`, named `voice`, acting `style`, and identity `evidence`. Each line has unique lowercase `id`, `scene`, source-unit IDs, relative scene `start`/`end`, `character_id`, Japanese `ja`, exact spoken Indonesian `text`, separate `direction`, and `uncertainty`. Cover each source unit or put it in `omissions` with a reason. Same-character fragments can merge into one performance with combined source IDs. Preserve meaning while writing concise, natural Indonesian. Do not voice stage directions, translate songs or invent missing dialogue.
 
+Read [performance guidance](performance.md) for character `register` defaults/relationships, `addressee_id`, recurring pronunciation, source-linked timing and event treatment. Prefer clean, slightly theatrical Indonesian: concise commands, consistent ranks, warm teammate conversation. Initial line bounds come from cited effective units. Deviations over 0.25 s require `timing_adjustment` reason/evidence; repeated source IDs need explicit bounded `source_splits` with complete chronological parts. A discovered wrong ASR boundary belongs in source corrections first.
+
 ```sh
 python tools/dub.py --config local/episode-01-pilot.json review --note "Describe actual source checks, cast decisions, phrase merges and unresolved doubts."
 ```
 
-This is the agent's editorial checkpoint within an authorized dubbing task; it does not require another user permission prompt. The seal binds script and source corrections. Script, cast, context, glossary, source or correction changes invalidate downstream acceptance. It is not a native-speaker certificate.
+This is the agent's checkpoint within an authorized task, not another user permission prompt. Review writes sealed `script-timing.json` and `performance-plan.json`. The seal binds script, source corrections, context, glossary, register defaults, pronunciation records and established cast. Changes invalidate downstream acceptance. Meaningful shouts, laughter, gasps, exertion and overlaps need explicit decisions in `performance_events`; unresolved selected events block final review. It is not a native-speaker certificate.
 
 ## Record and retake
 
@@ -68,7 +80,7 @@ python tools/dub.py --config local/episode-01-pilot.json voices
 python tools/dub.py --config local/episode-01-pilot.json voices --submit
 ```
 
-The first command previews requests, with exact text separate from acting metadata. The second records up to three calls concurrently. Stable prebuilt voice IDs and concise styles help preserve casting. Requests use the bundled Gemini adapter, not a global skill. Old takes remain in `voices/`; unchanged specs are reused. To deliberately record another performance with identical text/direction, increment that line's positive integer `take`, seal review again, and rerun voices. Never increment it to get around an uncertain network attempt.
+The first command previews requests, with exact text separate from acting/pronunciation metadata. The second records up to three distinct specifications concurrently. Identical repeated occurrences share one in-flight generation and cached WAV, while retaining distinct line timing/IDs. Stable voices and concise styles preserve casting. Requests use the bundled adapter, not a global skill. Old takes remain; unchanged specs are reused. To deliberately record another performance with identical text/direction, increment that line's positive integer `take`, re-review and rerun voices. Never increment it to evade an uncertain attempt.
 
 Use conversational Indonesian that preserves meaning, agency and relationships. Major characters should have distinct voices. Explain deliberate minor-role doubling and uncertainty in the review note. Audition actual WAVs; a voice label does not guarantee acting or pronunciation.
 
@@ -99,7 +111,7 @@ python tools/dub.py --config local/episode-01-pilot.json fit
 
 Inspect `timing-analysis.json`. Fit removes conservative edge silence, keeps pitch, and caps `atempo` at **1.12×**. It matches voices to separated speech levels, keeps music/effects, supports line `effect: "radio"`, and builds a single loudness-normalized master. Passthrough intervals copy original audio before global normalization; no original-language alternate is created.
 
-Overlong takes stop delivery. Condense naturally or adjust direction and retake. For measured held-shot gaps only, a line may set `approved_end_extension` up to **0.4 seconds** (default 0.22). Preserve source times and explain the evidence. Do not move later lines to hide an overrun. After edits run review, voices (unchanged takes are cached), then fit. The current fitter rejects overlapping source performances; resolve overlaps explicitly instead of silently dropping them.
+Overlong takes stop delivery. Condense naturally or adjust direction and retake. For measured held-shot gaps only, a line may set `approved_end_extension` up to **0.4 seconds** (default 0.22). Preserve source times and explain the evidence. Do not move later lines to hide overruns. After edits run review, voices (unchanged takes are cached), then fit. True simultaneous performances remain blocked; record and resolve treatment without silently dropping or serializing them. The [overlap extension plan](performance.md#planned-overlap-mixer-extension) defines the lane mixer and acceptance work still needed.
 
 ## Render, verify and audition
 
@@ -111,7 +123,7 @@ python tools/dub.py --config local/episode-01-pilot.json qa --start 0 --seconds 
 python tools/dub.py --config local/episode-01-pilot.json qa --background-scene dialogue-01 --start 0 --seconds 30 --submit
 ```
 
-Render verifies a candidate before replacing the destination. Existing outputs require `render --overwrite`. Verify requires current source, editorial, voice and mix seals. It checks 480p/aspect ratio, H.264/yuv420p, nominal frame rate, exactly one `ind` AAC stereo stream, duration, fast start, source identity and full decoding. `qa` extracts actual output audio; `--submit` additionally buys independent ASR and a bounded model listening opinion. Background QA uses the actual M&E stem, not the original mix.
+Render verifies a candidate before replacement; existing outputs require `render --overwrite`. Verify requires current source, editorial, voice and mix seals. It checks 480p/aspect ratio, H.264/yuv420p, frame rate and exact frame count, full-scope coverage against the actual source duration, one `ind` AAC stereo stream, duration, fast start, source identity and full decoding. It never caps a delayed concatenated picture to conceal drift. Synthetic regressions compare actual picture/audio markers across many fractional cuts, including disjoint 29.97 fps edits. `qa` extracts actual output audio; `--submit` additionally buys independent ASR/listening. Background QA uses actual M&E.
 
 Open actual exported frames with an image viewer and audition the rendered Indonesian track. Check character changes, names, shouted warnings, radio lines, transitions, Japanese bleed, music/effects balance and edge cuts. Model timestamps are approximate. Repair concrete problems and regenerate only affected stages. Distinguish mechanics, model opinions and user acceptance. This does not perform mouth-perfect lip synthesis or remove burned captions/watermarks.
 
@@ -119,7 +131,9 @@ Deliver `dubbed/<slug>.id.480p.mp4`, plus optional SRT, review TSV, script and c
 
 ## Recovery and maintenance
 
-Completed caches require matching receipt/hash. A claimed/uncertain request with no result blocks another POST. A known background ID is resumed via GET, including after retrieval errors. Requests check key presence before claiming a new paid attempt. There are no automatic paid retries.
+Completed caches require matching request metadata and result hash. Decimal QA starts/durations retain their complete hashed filenames. An exact verified completed legacy decimal cache can migrate locally; uncertain legacy attempts still block submission. A claimed/uncertain request with no result blocks another POST. Known background IDs resume via GET, including after retrieval errors. Keys are checked before claiming a new paid attempt; there are no automatic paid retries.
+
+Preparation receipts from before the shared-timeline upgrade are intentionally stale. Run status, refresh preparation, and inspect affected source evidence/review before further work. Keep all prior receipts and takes. Changed extraction hashes may require a new source transcription within an authorized processing task; do not blindly rerun the whole episode or regenerate unchanged accepted voices. This maintenance update does not alter already delivered pilot files.
 
 For a definitely rejected request, fix the cause and archive its receipt locally only after verifying no job was accepted. Keep evidence; never archive an unknown receipt to bypass the guard. Restore/retrieve corrupted results rather than pretending a new request is the old one. Cache/style/model changes create different jobs; inspect status first.
 

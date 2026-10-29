@@ -27,6 +27,7 @@ def status(project):
             checks[stage] = "missing"
             continue
         try:
+            project.prepared()
             if stage == "prepare":
                 project.prepared()
             elif stage == "review":
@@ -42,7 +43,12 @@ def status(project):
                 if stage == "render":
                     project.require("render", {"height": 480, "audio": "ind-only"})
             else:
-                project.require(stage)
+                project.require(
+                    stage,
+                    {k: project.model(k) for k in ["scribe", "transcribe"]}
+                    if stage == "transcribe"
+                    else None,
+                )
             checks[stage] = "current"
         except (ValueError, KeyError, FileNotFoundError) as error:
             checks[stage] = "stale: " + str(error)

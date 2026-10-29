@@ -143,7 +143,7 @@ def separate(project):
     inputs = [checkpoint]
     outputs = []
     try:
-        for scene in project.scenes:
+        for scene in project.edits():
             if scene["mode"] != "dub":
                 continue
             folder = project.folder(scene)

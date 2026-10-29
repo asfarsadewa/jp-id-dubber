@@ -9,7 +9,9 @@
   ],
   "series_context": "Describe only confirmed character relationships and setting.",
   "glossary": {},
-  "style": "Natural Bahasa Indonesia for classic television animation; conversational, clear and dramatic. Distinct stable character voices. No spoken director notes.",
+  "register_defaults": {"self":"aku", "address":"kau", "forms_of_address":[], "honorifics":[]},
+  "pronunciations": [],
+  "style": "Clean, slightly theatrical Bahasa Indonesia for classic television animation: concise commands, consistent ranks, warmer conversational phrasing among teammates. Distinct stable character voices, clear diction and no spoken director notes.",
   "models": {"scribe": "scribe_v2", "transcribe": "gpt-4o-transcribe", "adapt": "gpt-6.1-sol", "tts": "gemini-3.8-flash-tts", "listen": "gpt-audio-1.5"},
   "voice_workers": 3,
   "separator": {"checkout": "third_party/eluate", "checkpoint": "models/bandit-v2-multi.ckpt", "device": "cuda", "batch_size": 2}

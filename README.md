@@ -29,6 +29,8 @@ flowchart TD
 - **Explicit production stages:** source preparation, two ASRs, direct adaptation, review, voices, separation, fitting, mixing and verified delivery.
 - **Resumable provider work:** exclusive receipt claims, content-based caches, saved background response IDs and guards against uncertain resubmission.
 - **Performance controls:** separate spoken words and acting metadata, stable voice IDs, preserved old takes, pitch-preserving timing limits and local radio filtering when appropriate.
+- **Editorial continuity:** relationship-specific pronouns/address, confirmed recurring pronunciations, source-linked timing and explicit vocal-effort decisions.
+- **One edit timeline:** frame-resolved picture cuts, exact audio sample boundaries and caption offsets, with continuous picture for adjacent full-episode coverage.
 - **Useful sidecars:** Indonesian SRT, bilingual review TSV, script and cast JSON, with production evidence kept locally.
 - **Offline verification:** generated tone/video fixtures exercise mechanics without keys, episode downloads or copyrighted samples.
 
@@ -76,4 +78,4 @@ All media, dialogue, generated takes, stems, transcripts, captions, receipts, ep
 python tools/verify_project.py
 ```
 
-The suite checks paid-job reuse/recovery and a real synthetic single-track encode, including song passthrough and stale-artifact rejection. See [production workflow](docs/workflow.md), [public release checks](docs/release.md) and [third-party provenance](docs/provenance.md).
+The suite checks paid-job reuse/recovery, source/scope invalidation, missing-source corrections, repeated voice jobs and real marker synchronization across fractional edits. It also tests song passthrough and editorial timing/event gates. See [production workflow](docs/workflow.md), [performance guidance](docs/performance.md), [public release checks](docs/release.md) and [third-party provenance](docs/provenance.md).

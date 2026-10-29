@@ -4,8 +4,9 @@ from fractions import Fraction
 import json
 import subprocess
 import time
+import soundfile as sf
 from .core import need, probe, read, run, sha, write
-from .editorial import duration
+from .edits import coverage
 from .audio import captions, require_mix
 
 
@@ -48,7 +49,9 @@ def verify(project, path=None):
     )
     video = videos[0]
     a = audio[0]
-    expected = sum(duration(s) for s in project.scenes)
+    timeline = read(project.work / "edit-timeline.json")
+    expected = timeline["duration"]
+    coverage(project, float(probe(project.source)["format"]["duration"]))
     sar = Fraction(source.get("sample_aspect_ratio", "1:1").replace(":", "/"))
     dar = source["width"] * float(sar) / source["height"]
     boxnames = boxes(path)
@@ -60,6 +63,12 @@ def verify(project, path=None):
         "h264_8bit": video["codec_name"] == "h264" and video["pix_fmt"] == "yuv420p",
         "frame_rate_preserved": Fraction(video["r_frame_rate"])
         == Fraction(source["r_frame_rate"]),
+        "exact_picture_frame_count": int(video.get("nb_frames", -1))
+        == timeline["frame_count"],
+        "full_scope_coverage": project.config.get("scope") != "full"
+        or timeline["full_source_picture"],
+        "master_audio_sample_count": sf.info(project.work / "mix.id.wav").frames
+        == timeline["sample_count"],
         "indonesian_only": a.get("tags", {}).get("language") == "ind"
         and a["disposition"]["default"] == 1,
         "aac_stereo": a["codec_name"] == "aac"
@@ -101,6 +110,7 @@ def verify(project, path=None):
         "size_bytes": path.stat().st_size,
         "sha256": sha(path),
         "scope": project.config.get("scope", "pilot"),
+        "edit_timeline": timeline,
         "audio_policy": "single Bahasa Indonesia track; songs in passthrough intervals retain original singing",
     }
     write(project.work / "verification.json", report)
@@ -124,17 +134,41 @@ def render(project, overwrite=False):
     )
     sar = Fraction(source.get("sample_aspect_ratio", "1:1").replace(":", "/"))
     width = round(source["width"] * float(sar) / source["height"] * 480 / 2) * 2
-    args = ["ffmpeg", "-hide_banner", "-y"]
-    for scene in project.scenes:
-        args += ["-ss", scene["start"], "-t", duration(scene), "-i", project.source]
-    args += ["-i", project.work / "mix.id.wav"]
-    filters = [
-        f"[{i}:v:0]setpts=PTS-STARTPTS,scale={width}:480:flags=lanczos,setsar=1,format=yuv420p[v{i}]"
-        for i in range(len(project.scenes))
+    timeline = read(project.work / "edit-timeline.json")
+    scenes = timeline["scenes"]
+    fps = Fraction(timeline["fps"])
+    args = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-i",
+        project.source,
+        "-i",
+        project.work / "mix.id.wav",
     ]
+    if timeline["continuous_picture"]:
+        # Continuous full episodes (and adjacent excerpts) retain one continuous
+        # picture stream. No separately rounded video segments exist.
+        filters = [
+            f"[0:v:0]trim=start_frame={scenes[0]['source_start_frame']}:end_frame={scenes[-1]['source_end_frame']}[joined]"
+        ]
+    else:
+        filters = [
+            f"[0:v:0]split={len(scenes)}"
+            + "".join(f"[s{i}]" for i in range(len(scenes)))
+        ]
+        filters += [
+            f"[s{i}]trim=start_frame={s['source_start_frame']}:end_frame={s['source_end_frame']},setpts=PTS-STARTPTS[v{i}]"
+            for i, s in enumerate(scenes)
+        ]
+        filters += [
+            "".join(f"[v{i}]" for i in range(len(scenes)))
+            + f"concat=n={len(scenes)}:v=1:a=0[joined]"
+        ]
+    # Assign output times from the global frame count, rather than carrying
+    # concat's per-segment duration estimates into the delivery timeline.
     filters += [
-        "".join(f"[v{i}]" for i in range(len(project.scenes)))
-        + f"concat=n={len(project.scenes)}:v=1:a=0[v]"
+        f"[joined]setpts=N*{fps.denominator}/({fps.numerator}*TB),scale={width}:480:flags=lanczos,setsar=1,format=yuv420p[v]"
     ]
     args += [
         "-filter_complex",
@@ -142,7 +176,7 @@ def render(project, overwrite=False):
         "-map",
         "[v]",
         "-map",
-        f"{len(project.scenes)}:a:0",
+        "1:a:0",
         "-c:v",
         "libx264",
         "-preset",
@@ -159,8 +193,8 @@ def render(project, overwrite=False):
         "48000",
         "-ac",
         "2",
-        "-t",
-        sum(duration(s) for s in project.scenes),
+        "-frames:v",
+        timeline["frame_count"],
         "-movflags",
         "+faststart",
         "-map_metadata",
@@ -185,7 +219,11 @@ def render(project, overwrite=False):
     captions(project)
     project.record(
         "render",
-        [project.work / "mix.id.wav", project.work / "timeline.json"],
+        [
+            project.work / "mix.id.wav",
+            project.work / "timeline.json",
+            project.work / "edit-timeline.json",
+        ],
         [output],
         {"height": 480, "audio": "ind-only"},
     )

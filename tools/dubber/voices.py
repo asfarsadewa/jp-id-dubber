@@ -8,6 +8,7 @@ import wave
 import requests
 from .core import digest, env_key, need, read, sha, write
 from .providers import Jobs
+from .performance import pronunciation_notes
 
 REVISION = "2026-05-20"
 DEFAULT_STYLE = "Indonesian television animation dub. Natural native Indonesian pronunciation, directed dramatic acting. No background music. Do not speak any instructions."
@@ -36,6 +37,7 @@ def voice_spec(project, line, character):
                 character["style"],
                 line["direction"],
             ]
+            + pronunciation_notes(project, line["text"])
         ),
         "api_revision": REVISION,
         "take": line.get("take", 1),
@@ -147,12 +149,8 @@ def generate(project, submit=False):
     folder.mkdir(parents=True, exist_ok=True)
     jobs = Jobs(project.work / "api")
 
-    def one(item):
-        line, spec = item
+    def one(spec):
         body = payload(spec)
-        receipt, result = jobs.paths("voice", spec)
-        if not result.exists() and not receipt.exists():
-            env_key("GEMINI_API_KEY")
         data = jobs.request(
             "voice",
             spec,
@@ -165,12 +163,13 @@ def generate(project, submit=False):
                 json=body,
                 timeout=(30, 180),
             ),
+            before_send=lambda: env_key("GEMINI_API_KEY"),
         )
         need(
             data.get("model", spec["model"]) == spec["model"],
             "Returned TTS model differs from the requested model; inspect saved result",
         )
-        path = folder / (line["id"] + "-" + digest(spec)[:16] + ".wav")
+        path = folder / (digest(spec)[:24] + ".wav")
         raw = audio_wav(data)
         if path.exists():
             need(
@@ -181,9 +180,7 @@ def generate(project, submit=False):
             path.write_bytes(raw)
         with wave.open(str(path), "rb") as stream:
             seconds = stream.getnframes() / stream.getframerate()
-        print(line["id"] + f": {seconds:.2f}s recorded", flush=True)
         return {
-            "id": line["id"],
             "path": str(path),
             "sha256": sha(path),
             "spec_sha256": digest(spec),
@@ -192,8 +189,14 @@ def generate(project, submit=False):
             "model": spec["model"],
         }
 
+    # Coalesce identical specs inside this invocation. Exclusive receipt claims
+    # still protect separate processes and uncertain earlier submissions.
+    unique = {digest(spec): spec for line, spec in entries}
     with ThreadPoolExecutor(max_workers=project.config.get("voice_workers", 3)) as pool:
-        takes = list(pool.map(one, entries))
+        results = dict(zip(unique, pool.map(one, unique.values())))
+    takes = [{"id": line["id"], **results[digest(spec)]} for line, spec in entries]
+    for take in takes:
+        print(take["id"] + f": {take['seconds_raw']:.2f}s ready", flush=True)
     write(project.work / "voice-takes.json", takes)
     project.record(
         "voices",

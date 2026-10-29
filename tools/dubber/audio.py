@@ -50,25 +50,24 @@ def fit(project):
     problems = []
     combined = []
     timeline = []
-    offset = 0
-    inputs = [project.work / "script.json", project.work / "voice-takes.json"] + [
-        t["path"] for t in takes.values()
-    ]
+    inputs = [
+        project.work / "script.json",
+        project.work / "voice-takes.json",
+        project.work / "edit-timeline.json",
+    ] + [t["path"] for t in takes.values()]
     folder = project.work / "fitted"
     folder.mkdir(exist_ok=True)
-    for scene in project.scenes:
+    for scene in project.edits():
+        offset = scene["output_start_sample"] / RATE
         directory = project.folder(scene)
-        count = round(duration(scene) * RATE)
+        count = scene["sample_count"]
         if scene["mode"] == "passthrough":
             original, rate = sf.read(
                 directory / "original.wav", dtype="float32", always_2d=True
             )
-            need(
-                rate == RATE and len(original) >= count - 1, "Invalid passthrough audio"
-            )
+            need(rate == RATE and len(original) == count, "Invalid passthrough audio")
             combined.append(original[:count])
             inputs.append(directory / "original.wav")
-            offset += duration(scene)
             continue
         bed, rate = sf.read(
             directory / "stems/background.wav", dtype="float32", always_2d=True
@@ -79,7 +78,7 @@ def fit(project):
         need(
             rate == speech_rate == RATE
             and bed.shape[1] == speech.shape[1] == 2
-            and len(bed) >= count - 1,
+            and len(bed) == len(speech) == count,
             "Stem format/duration mismatch",
         )
         inputs += [directory / "stems/background.wav", directory / "stems/speech.wav"]
@@ -173,7 +172,6 @@ def fit(project):
         need(np.isfinite(mixed).all(), "Non-finite mixed audio")
         sf.write(directory / "dialogue.id.wav", dialog, RATE, subtype="FLOAT")
         combined.append(mixed)
-        offset += duration(scene)
     write(
         project.work / "timing-analysis.json",
         {

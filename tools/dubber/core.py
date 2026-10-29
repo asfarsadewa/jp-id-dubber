@@ -184,17 +184,29 @@ class Project:
         return state
 
     def prepared(self):
-        return self.require("prepare", self.scenes)
+        need(
+            self.source == self.path(self.config["source"]),
+            "Source selection changed; reload the project and prepare again",
+        )
+        return self.require("prepare", self.preparation_settings())
+
+    def preparation_settings(self):
+        return {
+            "source": str(self.path(self.config["source"])),
+            "scope": self.config.get("scope", "pilot"),
+            "scenes": self.scenes,
+            "edit_timeline_version": 1,
+        }
+
+    def edits(self):
+        self.prepared()
+        return read(self.work / "edit-timeline.json")["scenes"]
 
     def approved(self):
         self.prepared()
         state = self.require(
             "review",
-            {
-                "scenes": self.scenes,
-                "context": self.config.get("series_context", ""),
-                "glossary": self.config.get("glossary", {}),
-            },
+            self.review_settings(),
         )
         overrides = self.work / "source-overrides.json"
         need(
@@ -203,6 +215,20 @@ class Project:
             "Source overrides changed; review again",
         )
         return state
+
+    def review_settings(self):
+        from .performance import DEFAULT_REGISTER
+
+        return {
+            "scenes": self.scenes,
+            "context": self.config.get("series_context", ""),
+            "glossary": self.config.get("glossary", {}),
+            "style": self.config.get("style", ""),
+            "register_defaults": self.config.get("register_defaults", DEFAULT_REGISTER),
+            "pronunciations": self.config.get("pronunciations", []),
+            "cast": self.config.get("cast", []),
+            "performance_policy_version": 1,
+        }
 
 
 def env_key(name):

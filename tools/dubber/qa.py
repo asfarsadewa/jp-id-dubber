@@ -20,7 +20,7 @@ def check(project, start=0, seconds=40, submit=False, background_scene=None):
         scene = next(
             (
                 s
-                for s in project.scenes
+                for s in project.edits()
                 if s["id"] == background_scene and s["mode"] == "dub"
             ),
             None,
@@ -98,9 +98,6 @@ def check(project, start=0, seconds=40, submit=False, background_scene=None):
     }
     meta = {"sha256": sha(clip), "model": body["model"], "instruction": instruction}
     jobs = Jobs(project.work / "api")
-    receipt, result = jobs.paths("listening", meta)
-    if not result.exists() and not receipt.exists():
-        env_key("OPENAI_API_KEY")
     response = jobs.request(
         "listening",
         meta,
@@ -110,6 +107,7 @@ def check(project, start=0, seconds=40, submit=False, background_scene=None):
             json=body,
             timeout=(30, 240),
         ),
+        before_send=lambda: env_key("OPENAI_API_KEY"),
     )
     assessment = {
         "scope": "Model listening opinion; requires agent/user audition",

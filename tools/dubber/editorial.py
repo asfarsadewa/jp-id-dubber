@@ -2,8 +2,16 @@
 
 import math
 from PIL import Image, ImageDraw
-from .core import need, probe, read, run, safe_id, sha, write
+from .core import digest, need, probe, read, run, safe_id, sha, write
 from . import providers
+from .performance import (
+    DEFAULT_REGISTER,
+    check_character_register,
+    check_profile,
+    event_plan,
+    pronunciation_notes,
+    timing_report,
+)
 
 VOICES = [
     "Orus",
@@ -19,7 +27,11 @@ VOICES = [
 
 
 def duration(scene):
-    return scene["end"] - scene["start"]
+    return (
+        scene["sample_count"] / 48000
+        if "sample_count" in scene
+        else scene["end"] - scene["start"]
+    )
 
 
 def prepare(project):
@@ -32,26 +44,11 @@ def prepare(project):
             "This slug belongs to a different source; use a new slug",
         )
     info = probe(project.source)
-    total = float(info["format"]["duration"])
     need(any(s["codec_type"] == "video" for s in info["streams"]), "No video stream")
     need(any(s["codec_type"] == "audio" for s in info["streams"]), "No audio stream")
-    need(
-        all(s["end"] <= total + 0.03 for s in project.scenes),
-        "Scene extends beyond source",
-    )
-    if project.config.get("scope") == "full":
-        need(
-            abs(project.scenes[0]["start"]) < 0.02
-            and abs(project.scenes[-1]["end"] - total) < 0.05,
-            "Full scope must cover the whole episode",
-        )
-        need(
-            all(
-                abs(b["start"] - a["end"]) < 0.02
-                for a, b in zip(project.scenes, project.scenes[1:])
-            ),
-            "Full scope has an unreviewed gap",
-        )
+    from .edits import build
+
+    timeline = build(project, info, source_hash)
     write(
         identity,
         {
@@ -61,8 +58,13 @@ def prepare(project):
         },
     )
     write(project.work / "probe.json", info)
-    outputs = [identity, project.work / "probe.json"]
-    for scene in project.scenes:
+    outputs = [
+        identity,
+        project.work / "probe.json",
+        project.work / "frame-grid.json",
+        project.work / "edit-timeline.json",
+    ]
+    for scene in timeline["scenes"]:
         folder = project.folder(scene)
         folder.mkdir(parents=True, exist_ok=True)
         stamp = folder / "extraction.json"
@@ -91,6 +93,8 @@ def prepare(project):
                     "0:a:0",
                     "-ar",
                     "48000",
+                    "-af",
+                    f"aresample=48000,apad=whole_len={scene['sample_count']},atrim=end_sample={scene['sample_count']}",
                     "-ac",
                     "2",
                     "-c:a",
@@ -152,7 +156,7 @@ def prepare(project):
         contact = folder / "overview.jpg"
         sheet.save(contact, quality=91)
         outputs.append(contact)
-    project.record("prepare", [project.source], outputs, project.scenes)
+    project.record("prepare", [project.source], outputs, project.preparation_settings())
     print(
         "Prepared bounded scenes. Inspect contact sheets and source audio before adaptation."
     )
@@ -196,7 +200,7 @@ def transcribe(project):
     project.prepared()
     inputs = []
     outputs = []
-    for scene in project.scenes:
+    for scene in project.edits():
         if scene["mode"] != "dub":
             continue
         folder = project.folder(scene)
@@ -231,35 +235,90 @@ def source_units(project):
     overrides_path = project.work / "source-overrides.json"
     overrides = read(overrides_path) if overrides_path.exists() else []
     need(isinstance(overrides, list), "source-overrides.json must be an array")
-    used = set()
     result = {}
-    for scene in project.scenes:
+    for scene in project.edits():
         if scene["mode"] != "dub":
             continue
         units = read(project.folder(scene) / "units.json")
-        for unit in units:
-            edits = [
-                o
-                for o in overrides
-                if o["scene"] == scene["id"] and o["source_id"] == unit["id"]
-            ]
-            need(len(edits) <= 1, "Duplicate source correction")
-            if edits:
-                edit = edits[0]
-                need(
-                    bool(edit.get("reason", "").strip()),
-                    "Correction needs evidence/reason",
-                )
-                unit.update({k: edit[k] for k in ["ja", "start", "end"] if k in edit})
-                used.add((scene["id"], unit["id"]))
+        by_id = {u["id"]: u for u in units}
+        need(len(by_id) == len(units), "Duplicate raw source unit id")
+        touched = set()
+        for edit in [o for o in overrides if o["scene"] == scene["id"]]:
+            op = edit.get("op", "replace")
             need(
-                0 <= unit["start"] < unit["end"] <= duration(scene) + 0.01,
+                op in {"replace", "insert", "split"},
+                "Unknown source correction operation",
+            )
+            need(bool(edit.get("reason", "").strip()), "Correction needs a reason")
+            if op != "replace":
+                need(
+                    bool(edit.get("evidence", "").strip()),
+                    "Insert/split corrections need bounded source evidence",
+                )
+            provenance = {
+                "operation": op,
+                "reason": edit["reason"],
+                "evidence": edit.get("evidence", ""),
+            }
+            if op == "insert":
+                children = [edit["unit"]]
+            else:
+                parent_id = edit["source_id"]
+                need(parent_id in by_id, "Source override points to an unknown unit")
+                need(parent_id not in touched, "Duplicate source correction target")
+                touched.add(parent_id)
+                if op == "replace":
+                    by_id[parent_id].update(
+                        {
+                            k: edit[k]
+                            for k in ["ja", "start", "end", "speaker"]
+                            if k in edit
+                        }
+                    )
+                    by_id[parent_id]["correction"] = provenance
+                    continue
+                parent = by_id.pop(parent_id)
+                children = edit["units"]
+                need(
+                    len(children) >= 2,
+                    "Splitting a source unit needs at least two children",
+                )
+                need(
+                    all(
+                        parent["start"] <= c["start"] < c["end"] <= parent["end"]
+                        for c in children
+                    ),
+                    "Split children must remain inside their referenced source unit",
+                )
+                provenance = {**provenance, "derived_from": parent_id}
+            for child in children:
+                safe_id(child["id"])
+                need(
+                    child["id"] not in by_id, "Inserted/split source id already exists"
+                )
+                by_id[child["id"]] = {
+                    **child,
+                    "speaker": child.get("speaker", "manual"),
+                    "correction": provenance,
+                }
+        units = sorted(
+            by_id.values(), key=lambda u: (u["start"], u["end"], str(u["id"]))
+        )
+        for unit in units:
+            need(
+                all(
+                    isinstance(t, (int, float)) and math.isfinite(t)
+                    for t in [unit["start"], unit["end"]]
+                )
+                and 0 <= unit["start"] < unit["end"] <= duration(scene) + 0.01
+                and isinstance(unit.get("ja"), str)
+                and unit["ja"].strip(),
                 "Corrected source unit is out of bounds",
             )
         result[scene["id"]] = units
     need(
-        used == {(o["scene"], o["source_id"]) for o in overrides},
-        "Source override points to an unknown unit",
+        all(o["scene"] in result for o in overrides),
+        "Source override points to an unknown/passthrough scene",
     )
     return result
 
@@ -268,6 +327,7 @@ def schema(project, selected=None):
     s = {"type": "string"}
     n = {"type": "number"}
     i = {"type": "integer"}
+    unit_id = {"anyOf": [i, s]}
 
     def obj(fields):
         return {
@@ -280,11 +340,18 @@ def schema(project, selected=None):
     def arr(item):
         return {"type": "array", "items": item}
 
+    profile = {
+        "self": s,
+        "address": s,
+        "forms_of_address": arr(s),
+        "honorifics": arr(s),
+    }
+
     scene = {
         "type": "string",
         "enum": [
             s["id"]
-            for s in project.scenes
+            for s in project.edits()
             if s["mode"] == "dub" and (selected is None or s["id"] in selected)
         ],
     }
@@ -299,6 +366,14 @@ def schema(project, selected=None):
                         "voice": {"type": "string", "enum": VOICES},
                         "style": s,
                         "evidence": s,
+                        "register": obj(
+                            {
+                                "default": obj(profile),
+                                "relationships": arr(
+                                    obj({"addressee_id": s, **profile, "notes": s})
+                                ),
+                            }
+                        ),
                     }
                 )
             ),
@@ -307,7 +382,7 @@ def schema(project, selected=None):
                     {
                         "id": s,
                         "scene": scene,
-                        "source_ids": arr(i),
+                        "source_ids": arr(unit_id),
                         "start": n,
                         "end": n,
                         "character_id": s,
@@ -315,21 +390,68 @@ def schema(project, selected=None):
                         "text": s,
                         "direction": s,
                         "uncertainty": s,
+                        "addressee_id": s,
+                        "timing_adjustment": obj({"reason": s, "evidence": s}),
+                        "source_splits": arr(
+                            obj(
+                                {
+                                    "source_id": unit_id,
+                                    "part": i,
+                                    "parts": i,
+                                    "start": n,
+                                    "end": n,
+                                    "reason": s,
+                                    "evidence": s,
+                                }
+                            )
+                        ),
                     }
                 )
             ),
-            "omissions": arr(obj({"scene": scene, "source_id": i, "reason": s})),
+            "omissions": arr(obj({"scene": scene, "source_id": unit_id, "reason": s})),
+            "performance_events": arr(
+                obj(
+                    {
+                        "id": s,
+                        "scene": scene,
+                        "start": n,
+                        "end": n,
+                        "character_id": s,
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "overlap",
+                                "interruption",
+                                "shout",
+                                "laughter",
+                                "gasp",
+                                "exertion",
+                                "other",
+                            ],
+                        },
+                        "decision": {
+                            "type": "string",
+                            "enum": ["unresolved", "handled_as_line", "omit"],
+                        },
+                        "line_ids": arr(s),
+                        "reason": s,
+                        "evidence": s,
+                    }
+                )
+            ),
         }
     )
 
 
 def adaptation(project, scene_id=None):
+    check_profile(project.config.get("register_defaults", DEFAULT_REGISTER))
+    pronunciation_notes(project, "")
     units = source_units(project)
     payload = []
     images = []
     selected = [
         s
-        for s in project.scenes
+        for s in project.edits()
         if s["mode"] == "dub" and (scene_id is None or s["id"] == scene_id)
     ]
     need(bool(selected), "Choose a dub scene")
@@ -345,6 +467,11 @@ def adaptation(project, scene_id=None):
                 "scene": scene,
                 "units": units[scene["id"]],
                 "independent": read(folder / "independent.json"),
+                "asr_audio_events": [
+                    w
+                    for w in read(folder / "scribe.json").get("words", [])
+                    if w.get("type") not in {"word", "spacing"}
+                ],
             }
         )
         snapshots = [(u["start"] + u["end"]) / 2 for u in units[scene["id"]]]
@@ -355,7 +482,13 @@ def adaptation(project, scene_id=None):
         sheet = Image.new("RGB", (1280, 266 * ((len(snapshots) + 3) // 4)), "#171717")
         draw = ImageDraw.Draw(sheet)
         for index, t in enumerate(snapshots):
-            frame = folder / f"dialogue-{t:.3f}.jpg"
+            extraction = {
+                "source_sha256": read(project.work / "source-identity.json")["sha256"],
+                "absolute_time": scene["start"] + t,
+                "filter": "scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2",
+                "format": "jpeg-v1",
+            }
+            frame = folder / ("dialogue-" + digest(extraction)[:24] + ".jpg")
             if not frame.exists():
                 run(
                     [
@@ -370,7 +503,7 @@ def adaptation(project, scene_id=None):
                         "-frames:v",
                         "1",
                         "-vf",
-                        "scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2",
+                        extraction["filter"],
                         frame,
                     ]
                 )
@@ -387,6 +520,8 @@ def adaptation(project, scene_id=None):
         "context": project.config.get("series_context", ""),
         "glossary": project.config.get("glossary", {}),
         "established_cast": project.config.get("cast", []),
+        "register_defaults": project.config.get("register_defaults", DEFAULT_REGISTER),
+        "pronunciations": project.config.get("pronunciations", []),
         "style": project.config.get("style", ""),
         "scenes": payload,
     }
@@ -394,20 +529,20 @@ def adaptation(project, scene_id=None):
     result = providers.adapt(
         project, payload, schema(project, set(selected_units)), images, prompt
     )
-    validate_script(project, result, selected_units)
     target = project.work / (
         "scripts/" + scene_id + ".draft.json" if scene_id else "script.draft.json"
     )
     write(target, result)
+    validate_script(project, result, selected_units)
     print(
         "Saved script.draft.json. Review source, complete phrases, character evidence and timing; then copy to script.json and run review."
     )
 
 
-def validate_script(project, script, units=None):
+def validate_script(project, script, units=None, final=False):
     units = source_units(project) if units is None else units
     scenes = {
-        s["id"]: s for s in project.scenes if s["mode"] == "dub" and s["id"] in units
+        s["id"]: s for s in project.edits() if s["mode"] == "dub" and s["id"] in units
     }
     characters = {c["id"]: c for c in script["characters"]}
     need(len(characters) == len(script["characters"]), "Duplicate character id")
@@ -418,6 +553,9 @@ def validate_script(project, script, units=None):
             and bool(c["style"].strip())
             and bool(c["evidence"].strip()),
             "Missing voice, character style or identity evidence",
+        )
+        check_character_register(
+            c, project.config.get("register_defaults", DEFAULT_REGISTER)
         )
     names = set()
     last = {}
@@ -430,6 +568,8 @@ def validate_script(project, script, units=None):
         sid = line["scene"]
         need(sid in scenes, "Cannot voice a passthrough/song or unknown scene")
         need(line["character_id"] in characters, "Unknown character")
+        if line.get("addressee_id"):
+            safe_id(line["addressee_id"])
         start, end = line["start"], line["end"]
         need(
             all(isinstance(t, (int, float)) and math.isfinite(t) for t in [start, end])
@@ -438,7 +578,7 @@ def validate_script(project, script, units=None):
         )
         need(
             start >= last.get(sid, -1),
-            "Performances must be ordered and must not overlap; deliberate overlap needs a separate implementation",
+            f"{line['id']}: overlapping/out-of-order performance in {sid}; record the source event and resolve treatment. Simultaneous lanes are not implemented.",
         )
         last[sid] = end
         need(
@@ -465,6 +605,8 @@ def validate_script(project, script, units=None):
             not (used[sid] & omitted[sid]) and used[sid] | omitted[sid] == expected,
             f"Uncovered, double-accounted or unknown Japanese source units in {sid}",
         )
+    timing_report(script, units)
+    event_plan(script, scenes, final=final)
     return script
 
 
@@ -473,7 +615,8 @@ def assemble(project):
     lines = []
     omissions = []
     notes = []
-    for scene in project.scenes:
+    events = []
+    for scene in project.edits():
         if scene["mode"] != "dub":
             continue
         path = project.work / "scripts" / (scene["id"] + ".json")
@@ -493,12 +636,21 @@ def assemble(project):
             need(line["scene"] == scene["id"], "Per-scene file includes another scene")
             lines.append({**line, "id": scene["id"] + "-" + line["id"]})
         omissions += script.get("omissions", [])
+        events += [
+            {
+                **e,
+                "id": scene["id"] + "-" + e["id"],
+                "line_ids": [scene["id"] + "-" + ref for ref in e.get("line_ids", [])],
+            }
+            for e in script.get("performance_events", [])
+        ]
         notes.append(script.get("source_notes", ""))
     result = {
         "source_notes": "\n".join(notes),
         "characters": list(characters.values()),
         "lines": lines,
         "omissions": omissions,
+        "performance_events": events,
     }
     validate_script(project, result)
     write(project.work / "script.draft.json", result)
@@ -511,9 +663,16 @@ def review(project, note):
     need(bool(note.strip()), "Record concrete source/acting review notes")
     path = project.work / "script.json"
     need(path.exists(), "Review the draft into script.json first")
-    validate_script(project, read(path))
+    script = read(path)
+    validate_script(project, script, final=True)
+    timing_path = project.work / "script-timing.json"
+    write(timing_path, timing_report(script, source_units(project)))
+    plan_path = project.work / "performance-plan.json"
+    write(
+        plan_path, event_plan(script, {s["id"]: s for s in project.edits()}, final=True)
+    )
     inputs = [path]
-    for scene in project.scenes:
+    for scene in project.edits():
         if scene["mode"] == "dub":
             inputs += [
                 project.folder(scene) / n
@@ -525,12 +684,8 @@ def review(project, note):
     record = project.record(
         "review",
         inputs,
-        [],
-        {
-            "scenes": project.scenes,
-            "context": project.config.get("series_context", ""),
-            "glossary": project.config.get("glossary", {}),
-        },
+        [timing_path, plan_path],
+        project.review_settings(),
     )
     # Bind absence too: adding an override invalidates review.
     record["overrides_sha256"] = sha(overrides) if overrides.exists() else None

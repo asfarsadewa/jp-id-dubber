@@ -4,6 +4,7 @@ Read [.agents/skills/jp-id-dubber/SKILL.md](.agents/skills/jp-id-dubber/SKILL.md
 
 - Start with `python tools/dub.py --config local/EPISODE.json status`. Inspect receipts before any paid job. Unknown submission outcomes never justify a blind retry.
 - Make natural Bahasa Indonesia performances from reviewed Japanese. Keep character evidence, confirmed glossary, exact spoken text, and acting directions separate. Anonymous ASR speaker labels do not establish identity.
+- Record relationship-specific pronouns/address and recurring pronunciations. Use the shared frame/sample edit timeline and source-linked performance windows. Document timing shifts, source splits and meaningful vocal-effort decisions before recording.
 - Default to a short audition pilot. A full episode needs an explicit full-episode request and complete source-range coverage.
 - Export one Indonesian audio track in a compact 480p H.264/AAC MP4 in `dubbed/`. Songs pass through with their original singing; never generate translated song vocals. Preserve original music and effects through actual source separation.
 - Use reviewed script seals, content-hashed voice takes and bounded fitting. Fix overlong dialogue through adaptation or a retake before loosening timing limits.

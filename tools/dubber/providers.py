@@ -19,18 +19,59 @@ class Jobs:
 
     def paths(self, label, metadata):
         base = self.folder / (label + "-" + digest(metadata)[:24])
-        return base.with_suffix(".receipt.json"), base.with_suffix(".result.json")
+        return base.with_name(base.name + ".receipt.json"), base.with_name(
+            base.name + ".result.json"
+        )
 
-    def request(self, label, metadata, send, background=False, resume=None):
+    def request(
+        self, label, metadata, send, background=False, resume=None, before_send=None
+    ):
         receipt, result = self.paths(label, metadata)
+        # Old dotted labels discarded their hash. Adopt only an exact, verified
+        # completed match; uncertain legacy attempts must never cause a new POST.
+        legacy_base = self.folder / (label + "-" + digest(metadata)[:24])
+        legacy_receipt = legacy_base.with_suffix(".receipt.json")
+        legacy_result = legacy_base.with_suffix(".result.json")
+        if (
+            not receipt.exists()
+            and legacy_receipt != receipt
+            and legacy_receipt.exists()
+        ):
+            state = read(legacy_receipt)
+            need(
+                state.get("status") == "completed",
+                "Uncertain legacy dotted-label receipt; inspect it before another submission",
+            )
+            if state.get("metadata") == metadata:
+                need(
+                    legacy_result.exists()
+                    and state.get("result_sha256") == sha(legacy_result),
+                    "Corrupt legacy cache; preserve its receipt",
+                )
+                write(result, read(legacy_result))
+                write(
+                    receipt,
+                    {
+                        **state,
+                        "result_sha256": sha(result),
+                        "migrated_from": legacy_receipt.name,
+                    },
+                )
         if result.exists():
             need(
-                receipt.exists() and read(receipt).get("result_sha256") == sha(result),
+                receipt.exists()
+                and read(receipt).get("status") == "completed"
+                and read(receipt).get("metadata") == metadata
+                and read(receipt).get("result_sha256") == sha(result),
                 "Cached result has no matching completed receipt",
             )
             return read(result)
         if receipt.exists():
             state = read(receipt)
+            need(
+                state.get("metadata") == metadata,
+                "Receipt metadata differs from the current request; inspect the cache",
+            )
             need(
                 background and state.get("id") and resume,
                 f"Existing {state.get('status')} receipt: {receipt.name}. Inspect provider outcome; do not delete it or resubmit blindly",
@@ -38,6 +79,8 @@ class Jobs:
             # A failed GET never authorizes a new POST.
             response = resume(state["id"])
         else:
+            if before_send:
+                before_send()
             self.folder.mkdir(parents=True, exist_ok=True)
             # Exclusive creation prevents concurrent duplicate submissions.
             with receipt.open("x", encoding="utf-8") as stream:
@@ -157,10 +200,14 @@ def transcribe(project, path, label, language="ja", scribe=False):
                 timeout=(30, 600),
             )
 
-    receipt, result = jobs.paths(label, meta)
-    if not result.exists() and not receipt.exists():
-        env_key("ELEVENLABS_API_KEY" if scribe else "OPENAI_API_KEY")
-    return jobs.request(label, meta, send)
+    return jobs.request(
+        label,
+        meta,
+        send,
+        before_send=lambda: env_key(
+            "ELEVENLABS_API_KEY" if scribe else "OPENAI_API_KEY"
+        ),
+    )
 
 
 def adapt(project, payload, schema, images, instructions):
@@ -210,10 +257,14 @@ def adapt(project, payload, schema, images, instructions):
             timeout=(30, 60),
         )
 
-    receipt, result = jobs.paths("adapt", meta)
-    if not result.exists():
-        env_key("OPENAI_API_KEY")
-    data = jobs.request("adapt", meta, send, background=True, resume=resume)
+    data = jobs.request(
+        "adapt",
+        meta,
+        send,
+        background=True,
+        resume=resume,
+        before_send=lambda: env_key("OPENAI_API_KEY"),
+    )
     text = "".join(
         c["text"]
         for item in data.get("output", [])
