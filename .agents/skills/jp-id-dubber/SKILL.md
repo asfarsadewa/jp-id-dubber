@@ -33,7 +33,11 @@ Run fit, render and verify. Delivery is a 480p H.264/AAC MP4 with exactly one Ba
 
 Preparation binds source selection, scope and a shared resolved frame/sample edit timeline. Use its extracted-scene times for ASR, source corrections and performances; do not independently round video cuts or caption offsets. Existing preparation seals need refresh after this timeline upgrade. Inspect caches before any new paid work.
 
+Full scope covers both selected source streams (`v:0`/`a:0`) and the encoded audio through the master's final sample. A selected audio tail beyond the picture is rejected before paid work; picture holding needs explicit source conditioning. CFR validation respects the source `time_base`, including millisecond Matroska rounding, while retaining genuine irregularity/origin checks.
+
 Inventory overlapping speech and meaningful shouts, laughter, gasps and exertion in `performance_events`. Choose a supported serial line or evidenced omission; unresolved events block final review. Simultaneous lanes are a planned extension, and actual overlaps remain blocked. Never serialize overlaps or assume vocal efforts survived separation.
+
+Handled events must match every known performer. Use explicit `character_ids` only for supported sequential groups, with an empty single `character_id`. Declared overlap events cannot be handled by serial lines; intersections between cited source windows also block serialized rewrites independently of the 0.25 s timing threshold.
 
 Inspect actual exported frames and audition the rendered Indonesian track. Independent rendered-audio ASR and model listening opinions support the review; fix observed problems and re-verify. Distinguish mechanics, model opinions and user audition. Deliver the MP4 and optional SRT/review/cast sidecars from `dubbed/`.
 

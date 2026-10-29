@@ -180,6 +180,23 @@ def timing_report(script, units):
             and abs(parts[-1]["end"] - unit["end"]) <= TIMING_TOLERANCE,
             "Source split does not account for the full unit; correct source boundaries/omissions first",
         )
+    # Source simultaneity cannot become serial delivery just by moving each
+    # boundary within the individual timing tolerance.
+    for scene in by_scene:
+        windows = sorted(
+            (round(w["start"] * 48000), round(w["end"] * 48000), report["id"])
+            for report in reports
+            if report["scene"] == scene
+            for w in report["source_windows"]
+        )
+        active = []
+        for start, end, line_id in windows:
+            active = [item for item in active if item[1] > start]
+            need(
+                not any(item[2] != line_id for item in active),
+                f"Known source overlap in {scene} includes {line_id}; simultaneous lanes are unsupported. Correct inaccurate source bounds or resolve treatment; do not serialize simultaneous performances.",
+            )
+            active.append((start, end, line_id))
     return {"tolerance_seconds": TIMING_TOLERANCE, "performances": reports}
 
 
@@ -189,6 +206,22 @@ def event_plan(script, scenes, final=False):
     lines = {l["id"]: l for l in script["lines"]}
     for event in events:
         safe_id(event["id"])
+        group = event.get("character_ids", [])
+        need(isinstance(group, list), "Group performer identities must be a list")
+        need(
+            not group
+            or not event.get("character_id")
+            and len(group) >= 2
+            and len(group) == len(set(group)),
+            "A group event needs distinct character_ids and an empty single character_id",
+        )
+        need(
+            all(
+                c in {character["id"] for character in script["characters"]}
+                for c in group
+            ),
+            "Group event names an unknown performer identity",
+        )
         if event.get("character_id"):
             need(
                 event["character_id"] in {c["id"] for c in script["characters"]},
@@ -238,6 +271,10 @@ def event_plan(script, scenes, final=False):
         refs = event.get("line_ids", [])
         if event["decision"] == "handled_as_line":
             need(
+                event["kind"] != "overlap",
+                "An overlap event cannot be handled as serial lines while simultaneous lanes are unsupported",
+            )
+            need(
                 refs
                 and all(
                     r in lines
@@ -247,6 +284,14 @@ def event_plan(script, scenes, final=False):
                     for r in refs
                 ),
                 "Event line references must overlap its observed source interval",
+            )
+            performers = set(group) or (
+                {event["character_id"]} if event.get("character_id") else set()
+            )
+            need(
+                not performers
+                or {lines[r]["character_id"] for r in refs} == performers,
+                "Handled event lines must match every known performer identity; another character's dialogue cannot handle this event",
             )
         else:
             need(

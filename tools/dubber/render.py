@@ -6,7 +6,7 @@ import subprocess
 import time
 import soundfile as sf
 from .core import need, probe, read, run, sha, write
-from .edits import coverage
+from .edits import audio_is_covered, coverage, nearest_tick, selected_audio_bounds
 from .audio import captions, require_mix
 
 
@@ -51,7 +51,30 @@ def verify(project, path=None):
     a = audio[0]
     timeline = read(project.work / "edit-timeline.json")
     expected = timeline["duration"]
-    coverage(project, float(probe(project.source)["format"]["duration"]))
+    coverage(project, timeline["source_duration"])
+    selected_audio_covered = audio_is_covered(
+        timeline["scenes"],
+        Fraction(timeline["fps"]),
+        timeline["selected_streams"]["audio"],
+    )
+    source_ranges = timeline["scenes"]
+    full_picture_covered = (
+        all(
+            a["source_end_frame"] == b["source_start_frame"]
+            for a, b in zip(source_ranges, source_ranges[1:])
+        )
+        and timeline["scenes"][0]["source_start_frame"] == 0
+        and timeline["scenes"][-1]["source_end_frame"] == timeline["source_frame_count"]
+    )
+    delivered_audio = selected_audio_bounds(
+        path, a, Fraction(info["format"].get("start_time", "0"))
+    )
+    audio_tick = Fraction(a["time_base"])
+    delivered_audio_complete = nearest_tick(
+        Fraction(delivered_audio["start"]) / audio_tick
+    ) == 0 and nearest_tick(
+        Fraction(delivered_audio["end"]) / audio_tick
+    ) >= nearest_tick(Fraction(timeline["sample_count"], 48000) / audio_tick)
     sar = Fraction(source.get("sample_aspect_ratio", "1:1").replace(":", "/"))
     dar = source["width"] * float(sar) / source["height"]
     boxnames = boxes(path)
@@ -66,7 +89,11 @@ def verify(project, path=None):
         "exact_picture_frame_count": int(video.get("nb_frames", -1))
         == timeline["frame_count"],
         "full_scope_coverage": project.config.get("scope") != "full"
-        or timeline["full_source_picture"],
+        or full_picture_covered
+        and selected_audio_covered,
+        "full_selected_audio_coverage": project.config.get("scope") != "full"
+        or selected_audio_covered,
+        "delivered_audio_coverage": delivered_audio_complete,
         "master_audio_sample_count": sf.info(project.work / "mix.id.wav").frames
         == timeline["sample_count"],
         "indonesian_only": a.get("tags", {}).get("language") == "ind"
@@ -111,6 +138,7 @@ def verify(project, path=None):
         "sha256": sha(path),
         "scope": project.config.get("scope", "pilot"),
         "edit_timeline": timeline,
+        "delivered_audio": delivered_audio,
         "audio_policy": "single Bahasa Indonesia track; songs in passthrough intervals retain original singing",
     }
     write(project.work / "verification.json", report)

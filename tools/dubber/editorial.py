@@ -417,6 +417,7 @@ def schema(project, selected=None):
                         "start": n,
                         "end": n,
                         "character_id": s,
+                        "character_ids": arr(s),
                         "kind": {
                             "type": "string",
                             "enum": [

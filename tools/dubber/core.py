@@ -191,11 +191,13 @@ class Project:
         return self.require("prepare", self.preparation_settings())
 
     def preparation_settings(self):
+        from .edits import VERSION
+
         return {
             "source": str(self.path(self.config["source"])),
             "scope": self.config.get("scope", "pilot"),
             "scenes": self.scenes,
-            "edit_timeline_version": 1,
+            "edit_timeline_version": VERSION,
         }
 
     def edits(self):
@@ -227,7 +229,7 @@ class Project:
             "register_defaults": self.config.get("register_defaults", DEFAULT_REGISTER),
             "pronunciations": self.config.get("pronunciations", []),
             "cast": self.config.get("cast", []),
-            "performance_policy_version": 1,
+            "performance_policy_version": 2,
         }
 
 

@@ -41,6 +41,8 @@ All source-unit and performance times are relative to the **resolved extracted s
 
 Fix incorrect ASR bounds in `source-overrides.json` first. A delivery adjustment must not conceal wrong source timing. It does not relax the fit stage's 1.12× speed limit, next-utterance collision guard or separate 0.4 s maximum end extension. `review` writes sealed `script-timing.json` with source windows, derived bounds, authored bounds and significant shifts, before voices are generated.
 
+The 0.25 s threshold is not permission to serialize simultaneous source speech. Review checks intersections between cited effective source windows on the audio sample grid, independently of authored line times. Known source overlap remains unsupported even when both new line boundaries fall within the individual timing tolerance. Correct inaccurate source bounds with evidence; do not shift or relabel a genuine overlap to evade the guard.
+
 Repeated source IDs are rejected unless they are declared parts of one utterance. Prefer splitting a merged unit in the correction layer so every new unit has a stable ID. If one source unit intentionally supplies several performances, each line declares its source subrange and chronological part:
 
 ```json
@@ -70,11 +72,11 @@ Record meaningful selected events in the script's `performance_events` array:
 
 Supported kinds are `overlap`, `interruption`, `shout`, `laughter`, `gasp`, `exertion` and `other`. Decisions are:
 
-- `handled_as_line`: a matching serial performance represents the event, with its line ID, source evidence and direction. A missing source effort may need an inserted effective unit first; describe the vocal sound rather than inventing Japanese lexical dialogue.
+- `handled_as_line`: matching serial performances represent the event, with line IDs, source evidence and direction. A known `character_id` must match every referenced performance. For an explicitly sequential multi-performer event, leave `character_id` empty and set distinct known `character_ids`; referenced lines must represent exactly that complete group. The group field cannot override a known single identity or enable simultaneous lanes. A missing source effort may need an inserted effective unit first; describe the vocal sound rather than inventing Japanese lexical dialogue.
 - `omit`: a deliberate, evidenced editorial omission, with no rendered line IDs. Do not use this automatically for all nonlexical sounds.
 - `unresolved`: source listening or an unsupported treatment is still needed. This blocks final review and voice generation for the selected scene.
 
-Drafts can retain unresolved events. `review` seals their decisions in `performance-plan.json`. Actual overlapping lines remain an explicit blocker: do not serialize an interruption to evade the validator, reintroduce the full Japanese mix, or claim that the current mixer supports simultaneous lanes. Preserve auditioned efforts/takes and avoid cloning original actors as an assumed requirement.
+Drafts can retain unresolved events. `review` seals their decisions in `performance-plan.json`. An event explicitly marked `kind: "overlap"` cannot be `handled_as_line` while simultaneous lanes are unsupported. The source-window guard also rejects known simultaneity when an event is relabelled or the authored lines no longer overlap. Do not serialize an interruption, reintroduce the full Japanese mix, or claim simultaneous support. Preserve auditioned efforts/takes and avoid cloning original actors as an assumed requirement.
 
 ## Planned overlap-mixer extension
 
