@@ -1,6 +1,9 @@
 """Bounded source preparation, direct adaptation and explicit editorial review."""
 
 import math
+from fractions import Fraction
+import numpy as np
+import soundfile as sf
 from PIL import Image, ImageDraw
 from .core import digest, need, probe, read, run, safe_id, sha, write
 from . import providers
@@ -38,6 +41,57 @@ def duration(scene):
     )
 
 
+def source_audio_clock(project, timeline):
+    """Decode once without input seeking; slice scenes on an exact PCM clock."""
+    from .edits import AUDIO_CLOCK_VERSION
+
+    fps = Fraction(timeline["fps"])
+    audio_end = round(Fraction(timeline["selected_streams"]["audio"]["end"]) * 48000)
+    count = max(
+        audio_end, round(Fraction(timeline["source_frame_count"] * 48000, 1) / fps)
+    )
+    path, marker = project.work / "source.clock.wav", project.work / "source.clock.json"
+    spec = {
+        "source_sha256": timeline["source_sha256"],
+        "audio_end_sample": audio_end,
+        "sample_count": count,
+        "audio_clock_version": AUDIO_CLOCK_VERSION,
+    }
+    valid = marker.exists() and read(marker).get("spec") == spec and path.exists()
+    valid = valid and read(marker).get("sha256") == sha(path)
+    if not valid:
+        # Input -ss can discard an AAC frame in FFmpeg 9, even at zero. A
+        # timestamped source decode also preserves positive audio start offsets.
+        run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                project.source,
+                "-map",
+                "0:a:0",
+                "-af",
+                f"aresample=48000:first_pts=0,atrim=end_sample={audio_end},apad=whole_len={count},atrim=end_sample={count},asetpts=N/SR/TB",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-c:a",
+                "pcm_s16le",
+                path,
+            ]
+        )
+        info = sf.info(path)
+        need(
+            info.samplerate == 48000 and info.channels == 2 and info.frames == count,
+            "Source PCM clock does not match selected stream coverage",
+        )
+        write(marker, {"spec": spec, "sha256": sha(path)})
+    return path, marker
+
+
 def prepare(project):
     need(project.source.is_file(), "Source file does not exist")
     identity = project.work / "source-identity.json"
@@ -68,11 +122,19 @@ def prepare(project):
         project.work / "frame-grid.json",
         project.work / "edit-timeline.json",
     ]
+    clock, clock_marker = source_audio_clock(project, timeline)
+    outputs += [clock, clock_marker]
+    from .edits import AUDIO_CLOCK_VERSION
+
     for scene in timeline["scenes"]:
         folder = project.folder(scene)
         folder.mkdir(parents=True, exist_ok=True)
         stamp = folder / "extraction.json"
-        spec = {"source_sha256": source_hash, "scene": scene}
+        spec = {
+            "source_sha256": source_hash,
+            "scene": scene,
+            "audio_clock_version": AUDIO_CLOCK_VERSION,
+        }
         wav, mp3 = folder / "original.wav", folder / "source.mp3"
         valid = stamp.exists() and read(stamp).get("spec") == spec
         if valid:
@@ -81,31 +143,18 @@ def prepare(project):
                 for p in [wav, mp3]
             )
         if not valid:
-            run(
-                [
-                    "ffmpeg",
-                    "-v",
-                    "error",
-                    "-y",
-                    "-ss",
-                    scene["start"],
-                    "-i",
-                    project.source,
-                    "-t",
-                    duration(scene),
-                    "-map",
-                    "0:a:0",
-                    "-ar",
-                    "48000",
-                    "-af",
-                    f"aresample=48000,apad=whole_len={scene['sample_count']},atrim=end_sample={scene['sample_count']}",
-                    "-ac",
-                    "2",
-                    "-c:a",
-                    "pcm_s16le",
-                    wav,
-                ]
-            )
+            fps = Fraction(timeline["fps"])
+            start_sample = round(Fraction(scene["source_start_frame"] * 48000, 1) / fps)
+            end_sample = round(Fraction(scene["source_end_frame"] * 48000, 1) / fps)
+            count = scene["sample_count"]
+            samples = np.zeros((count, 2), dtype="int16")
+            with sf.SoundFile(clock) as original:
+                original.seek(min(start_sample, original.frames))
+                selected = original.read(
+                    min(count, end_sample - start_sample), dtype="int16", always_2d=True
+                )
+            samples[: len(selected)] = selected
+            sf.write(wav, samples, 48000, subtype="PCM_16")
             run(
                 [
                     "ffmpeg",

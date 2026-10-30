@@ -191,13 +191,14 @@ class Project:
         return self.require("prepare", self.preparation_settings())
 
     def preparation_settings(self):
-        from .edits import VERSION
+        from .edits import AUDIO_CLOCK_VERSION, VERSION
 
         return {
             "source": str(self.path(self.config["source"])),
             "scope": self.config.get("scope", "pilot"),
             "scenes": self.scenes,
             "edit_timeline_version": VERSION,
+            "audio_clock_version": AUDIO_CLOCK_VERSION,
         }
 
     def edits(self):

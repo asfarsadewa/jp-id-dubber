@@ -8,6 +8,7 @@ from .core import need, read, write
 
 VERSION = 3
 RATE = 48000
+AUDIO_CLOCK_VERSION = 1
 
 
 def nearest_tick(value):

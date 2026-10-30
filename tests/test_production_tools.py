@@ -274,9 +274,85 @@ class SourceAndCompactExports(unittest.TestCase):
             write(p.config_path, config)
             p = Project(p.config_path, root=p.root)
             prepare(p)
+            direct = p.root / "direct-source.wav"
+            run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-n",
+                    "-i",
+                    output,
+                    "-map",
+                    "0:a:0",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                    "-c:a",
+                    "pcm_s16le",
+                    direct,
+                ]
+            )
+            decoded, _ = sf.read(direct, dtype="int16")
+            selected, _ = sf.read(p.folder(p.scenes[0]) / "original.wav", dtype="int16")
+            np.testing.assert_array_equal(selected, decoded[:288000])
             self.assertTrue(finish_passthrough(p)["passed"])
+            config.update(
+                slug="conditioned-pilot",
+                scope="pilot",
+                scenes=[
+                    {"id": "excerpt", "start": 1.25, "end": 3.0, "mode": "passthrough"}
+                ],
+            )
+            write(p.config_path, config)
+            pilot = Project(p.config_path, root=p.root)
+            prepare(pilot)
+            excerpt, _ = sf.read(
+                pilot.folder(pilot.scenes[0]) / "original.wav", dtype="int16"
+            )
+            np.testing.assert_array_equal(excerpt, decoded[60000:144000])
             with self.assertRaises(ValueError):
                 condition(p.source, output)
+
+    def test_source_clock_preserves_delayed_audio_and_silent_picture_tail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = source_project(Path(tmp))
+            run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=navy:s=160x120:r=24:d=6",
+                    "-itsoffset",
+                    "0.5",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=48000:duration=5",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-ac",
+                    "2",
+                    p.source,
+                ]
+            )
+            prepare(p)
+            data, rate = sf.read(p.folder(p.scenes[0]) / "original.wav", dtype="int16")
+            self.assertEqual(len(data), 6 * rate)
+            self.assertFalse(data[: round(0.4 * rate)].any())
+            self.assertFalse(data[round(5.7 * rate) :].any())
+            self.assertGreater(
+                float(np.sqrt(np.mean(data[rate : 2 * rate].astype(float) ** 2))), 100
+            )
 
     def test_compact_preserves_audio_canonical_records_and_all_frames(self):
         with tempfile.TemporaryDirectory() as tmp:
