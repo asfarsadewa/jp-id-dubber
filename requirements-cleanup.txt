@@ -1,0 +1,10 @@
+# Optional residual-vocal cleanup. Install after the platform-appropriate
+# PyTorch/torchaudio build and requirements-separator.txt in the same environment.
+demucs==4.0.1
+openunmix==1.3.0
+dora-search==0.1.13
+julius==0.2.8
+lameenc==1.9.0
+retrying==1.4.2
+submitit==1.5.4
+treetable==0.2.6

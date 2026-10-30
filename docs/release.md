@@ -6,7 +6,7 @@ The include set is root docs/license/config examples/dependencies, `tools/`, `te
 
 ```sh
 python tools/verify_project.py
-git add AGENTS.md README.md LICENSE .gitignore .gitattributes .env.example project.example.json requirements.txt requirements.lock.txt requirements-separator.txt tools tests prompts docs .agents .github
+git add AGENTS.md README.md LICENSE .gitignore .gitattributes .env.example project.example.json requirements.txt requirements.lock.txt requirements-separator.txt requirements-cleanup.txt tools tests prompts docs .agents .github
 python tools/public_audit.py
 git diff --cached --stat
 git diff --cached

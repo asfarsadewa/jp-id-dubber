@@ -19,6 +19,7 @@ ROOT_FILES = {
     "requirements.txt",
     "requirements.lock.txt",
     "requirements-separator.txt",
+    "requirements-cleanup.txt",
 }
 DIRECTORIES = {"tools", "tests", "prompts", "docs", ".agents", ".github"}
 EXTENSIONS = {".py", ".md", ".json", ".txt", ".yaml", ".yml"}

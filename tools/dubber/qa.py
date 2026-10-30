@@ -26,8 +26,10 @@ def check(project, start=0, seconds=40, submit=False, background_scene=None):
             None,
         )
         need(scene is not None, "Choose a dub scene for background listening")
-        project.require("separate")
-        source = project.folder(scene) / "stems/background.wav"
+        from .postproduction import require, stems
+
+        require(project)
+        source, _ = stems(project, scene)
         total = scene["end"] - scene["start"]
     else:
         source = project.output

@@ -23,6 +23,63 @@ class Jobs:
             base.name + ".result.json"
         )
 
+    def import_completed(self, source, label, metadata):
+        """Copy an exact completed cache; never overwrite uncertain submissions."""
+        old_receipt, old_result = source.paths(label, metadata)
+        if not old_receipt.exists() and not old_result.exists():
+            return False
+        need(
+            old_receipt.exists() and old_result.exists(),
+            "Incomplete source cache; inspect its receipt",
+        )
+        state = read(old_receipt)
+        need(
+            state.get("status") == "completed"
+            and state.get("metadata") == metadata
+            and state.get("result_sha256") == sha(old_result),
+            "Source cache is uncertain or corrupt; it cannot authorize another job",
+        )
+        receipt, result = self.paths(label, metadata)
+        origin = {
+            "receipt": str(old_receipt.resolve()),
+            "result_sha256": state["result_sha256"],
+        }
+        self.folder.mkdir(parents=True, exist_ok=True)
+        if receipt.exists():
+            current = read(receipt)
+            need(
+                current.get("metadata") == metadata,
+                "Destination receipt metadata differs",
+            )
+            if current.get("status") == "completed":
+                need(
+                    result.exists() and current.get("result_sha256") == sha(result),
+                    "Corrupt destination cache",
+                )
+                return True
+            need(
+                current.get("status") == "importing"
+                and current.get("imported_from") == origin,
+                "Destination has an uncertain submission; preserve its receipt and resolve it first",
+            )
+        else:
+            need(
+                not result.exists(),
+                "Destination has an orphan result; inspect it first",
+            )
+            with receipt.open("x", encoding="utf-8") as stream:
+                json.dump(
+                    {
+                        "status": "importing",
+                        "metadata": metadata,
+                        "imported_from": origin,
+                    },
+                    stream,
+                )
+        write(result, read(old_result))
+        write(receipt, {**state, "result_sha256": sha(result), "imported_from": origin})
+        return True
+
     def request(
         self, label, metadata, send, background=False, resume=None, before_send=None
     ):

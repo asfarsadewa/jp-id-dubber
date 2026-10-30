@@ -30,7 +30,7 @@ def boxes(path):
     return result
 
 
-def verify(project, path=None):
+def verify(project, path=None, report_path=None):
     require_mix(project)
     if path is None:
         project.require("render", {"height": 480, "audio": "ind-only"})
@@ -128,7 +128,13 @@ def verify(project, path=None):
         encoding="utf-8",
     )
     checks["full_decode"] = decoded.returncode == 0 and not decoded.stderr.strip()
-    (project.work / "decode.log").write_text(decoded.stderr, encoding="utf-8")
+    report_path = report_path or project.work / "verification.json"
+    decode_log = (
+        project.work / "decode.log"
+        if report_path.name == "verification.json"
+        else report_path.with_suffix(".decode.log")
+    )
+    decode_log.write_text(decoded.stderr, encoding="utf-8")
     report = {
         "passed": all(checks.values()),
         "checks": checks,
@@ -141,42 +147,18 @@ def verify(project, path=None):
         "delivered_audio": delivered_audio,
         "audio_policy": "single Bahasa Indonesia track; songs in passthrough intervals retain original singing",
     }
-    write(project.work / "verification.json", report)
+    write(report_path, report)
     need(report["passed"], "Export verification failed; inspect verification.json")
     return report
 
 
-def render(project, overwrite=False):
-    require_mix(project)
-    output = project.output
-    need(
-        overwrite or not output.exists(),
-        "Existing export requires --overwrite; replacement happens only after candidate validation",
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    partial = output.with_name(output.stem + ".partial.mp4")
-    source = next(
-        s
-        for s in read(project.work / "probe.json")["streams"]
-        if s["codec_type"] == "video"
-    )
+def picture_filters(source, timeline):
+    """Use the same picture clock for primary and smaller exports."""
     sar = Fraction(source.get("sample_aspect_ratio", "1:1").replace(":", "/"))
     width = round(source["width"] * float(sar) / source["height"] * 480 / 2) * 2
-    timeline = read(project.work / "edit-timeline.json")
     scenes = timeline["scenes"]
     fps = Fraction(timeline["fps"])
-    args = [
-        "ffmpeg",
-        "-hide_banner",
-        "-y",
-        "-i",
-        project.source,
-        "-i",
-        project.work / "mix.id.wav",
-    ]
     if timeline["continuous_picture"]:
-        # Continuous full episodes (and adjacent excerpts) retain one continuous
-        # picture stream. No separately rounded video segments exist.
         filters = [
             f"[0:v:0]trim=start_frame={scenes[0]['source_start_frame']}:end_frame={scenes[-1]['source_end_frame']}[joined]"
         ]
@@ -193,11 +175,37 @@ def render(project, overwrite=False):
             "".join(f"[v{i}]" for i in range(len(scenes)))
             + f"concat=n={len(scenes)}:v=1:a=0[joined]"
         ]
-    # Assign output times from the global frame count, rather than carrying
-    # concat's per-segment duration estimates into the delivery timeline.
     filters += [
         f"[joined]setpts=N*{fps.denominator}/({fps.numerator}*TB),scale={width}:480:flags=lanczos,setsar=1,format=yuv420p[v]"
     ]
+    return filters
+
+
+def render(project, overwrite=False):
+    require_mix(project)
+    output = project.output
+    need(
+        overwrite or not output.exists(),
+        "Existing export requires --overwrite; replacement happens only after candidate validation",
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    partial = output.with_name(output.stem + ".partial.mp4")
+    source = next(
+        s
+        for s in read(project.work / "probe.json")["streams"]
+        if s["codec_type"] == "video"
+    )
+    timeline = read(project.work / "edit-timeline.json")
+    args = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-i",
+        project.source,
+        "-i",
+        project.work / "mix.id.wav",
+    ]
+    filters = picture_filters(source, timeline)
     args += [
         "-filter_complex",
         ";".join(filters),

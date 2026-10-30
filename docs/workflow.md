@@ -18,7 +18,7 @@ Prepare resolves requested boundaries once onto the actual source frame grid. `e
 
 The frame audit compares integer timestamps against the expected CFR grid quantized into the stream's `time_base`, rather than using a fixed microsecond tolerance. Ordinary millisecond-rounded CFR Matroska timestamps are supported; genuine irregularity, missing frames and unsupported origin offsets still fail. The source audit records selected audio bounds by intersecting packet presentation ranges with decoded frame sample bounds, accounting for codec padding once across FFmpeg versions. Full coverage uses these selected-stream endpoints rather than the container duration alone. The source audio audit is cached by source identity; it decodes audio only when that cache needs refresh.
 
-If a selected range includes audio after the last picture frame, preparation stops with an audio-tail explanation before ASR/TTS jobs. The exporter does not silently clamp that sound to the video duration. Last-picture holding is not implemented here: explicitly condition a separate source copy to preserve the tail, or choose an authorized pilot range that does not include it. A source with such a tail can still supply an earlier bounded pilot. Audio that ends earlier than the picture is retained and the remaining picture interval stays quiet.
+If a selected range includes audio after the last picture frame, preparation stops before ASR/TTS jobs. Use the bundled `condition-source` command to make a separately verified lossless picture-hold copy, then initialize a new slug against it and plan coverage using its duration. The original is retained. See [source conditioning](postproduction.md#preserve-an-audio-tail). A bounded pilot before the tail still works without conditioning. Audio that ends earlier than the picture is retained and the remaining picture interval stays quiet.
 
 Before paid work, inspect status and uncertain/pending receipts. Completed caches can be reused without keys. There is no paid `all` command. A configured model is never silently replaced.
 
@@ -88,6 +88,15 @@ The first command previews requests, with exact text separate from acting/pronun
 
 Use conversational Indonesian that preserves meaning, agency and relationships. Major characters should have distinct voices. Explain deliberate minor-role doubling and uncertainty in the review note. Audition actual WAVs; a voice label does not guarantee acting or pronunciation.
 
+When extending a pilot under another config, preserve established voice IDs, exact styles and unchanged wording before review. Import matching completed requests without network calls:
+
+```sh
+python tools/dub.py --config local/episode-01.json reuse-voices --from-config local/episode-01-pilot.json
+python tools/dub.py --config local/episode-01.json voices
+```
+
+Only exact request specifications match, including model, text, voice, style and take. Uncertain or corrupt receipts block import; existing uncertain destination jobs cannot be replaced. `voices --submit` then materializes cached WAVs and records only unmatched requests within the authorized scope. Transcript reuse is separate: changed audio extraction or scene clocks require their own evidence, and raw ASRs must remain intact.
+
 ## Source separation
 
 Use Python 3.12. Install platform-appropriate PyTorch first. The pilot's RTX GPU worked with this CUDA build:
@@ -108,6 +117,8 @@ Setup checks out pinned ELUATE, applies the narrow Windows POSIX-telemetry compa
 Separation retains `speech.wav`, `music.wav` and `sfx.wav`; `background.wav` is **music + sfx**. The original speech estimate measures level and is not mixed into Indonesian scenes. Listen to the background for residual words, distorted music or missing effects. Source/checkpoint hashes guard cached stems. The adapter uses pinned internal ELUATE APIs; upgrade deliberately and replay integration checks.
 
 ## Fit and mix
+
+Listen to the actual separated bed before fitting. If residual voices remain in music, configure evidenced cleanup windows or an instrumental repair and run optional `refine`; see [stem postproduction](postproduction.md#repair-residual-voices-in-music). It preserves raw stems and creates a separate level reference from source speech plus removed music components. Fitting uses that reference only for gain measurement; it never mixes original speech into the output. Plan changes invalidate refinement and its mix, while cached voices remain reusable.
 
 ```sh
 python tools/dub.py --config local/episode-01-pilot.json fit
@@ -132,6 +143,8 @@ Render verifies a candidate before replacement; existing outputs require `render
 Open actual exported frames with an image viewer and audition the rendered Indonesian track. Check character changes, names, shouted warnings, radio lines, transitions, Japanese bleed, music/effects balance and edge cuts. Model timestamps are approximate. Repair concrete problems and regenerate only affected stages. Distinguish mechanics, model opinions and user acceptance. This does not perform mouth-perfect lip synthesis or remove burned captions/watermarks.
 
 Deliver `dubbed/<slug>.id.480p.mp4`, plus optional SRT, review TSV, script and cast sidecars. Keep `work/<slug>/` as local provenance. Before paid full-episode work, establish requested scope/casting if it has not already been given; an accepted pilot alone does not authorize a full episode.
+
+For a smaller copy, run `compact` after the main render. It uses the shared source-picture timeline and copies the existing Indonesian AAC unchanged. The new file and verification are separate; the original stays available. See [smaller exports](postproduction.md#make-a-smaller-480p-copy).
 
 ## Recovery and maintenance
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Japanese to Indonesian Dubbing"
   short_description: "Make directed Indonesian dubs with original music and effects"
-  default_prompt: "Use $jp-id-dubber to produce a reviewed Indonesian dub pilot and a verified 480p MP4."
+  default_prompt: "Use $jp-id-dubber to create or revise an Indonesian dub and export a verified single-track 480p MP4 for the requested scope."

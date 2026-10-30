@@ -134,6 +134,19 @@ def specs(project):
     ]
 
 
+def reuse(project, source):
+    """Reuse exact voice requests from another local project, without any API call."""
+    jobs, previous = Jobs(project.work / "api"), Jobs(source.work / "api")
+    unique = {digest(spec): spec for _, spec in specs(project)}
+    matched = sum(
+        jobs.import_completed(previous, "voice", spec) for spec in unique.values()
+    )
+    print(
+        f"Reused {matched}/{len(unique)} completed voice specifications. Run voices to materialize cached WAVs."
+    )
+    return matched
+
+
 def generate(project, submit=False):
     entries = specs(project)
     if not submit:

@@ -6,9 +6,18 @@ import soundfile as sf
 from .core import need, read, run, write
 from .editorial import duration
 from .voices import require_takes
+from . import postproduction
 
 RATE = 48000
 MAX_TEMPO = 1.12
+
+
+def mix_settings(project):
+    settings = {"max_tempo": MAX_TEMPO}
+    refinement = postproduction.settings(project)
+    if refinement:
+        settings["postprocess"] = refinement
+    return settings
 
 
 def trim_edges(audio, rate):
@@ -44,7 +53,7 @@ def active_rms(audio):
 
 def fit(project):
     takes = require_takes(project)
-    project.require("separate")
+    postproduction.require(project)
     script = read(project.work / "script.json")
     records = []
     problems = []
@@ -69,19 +78,16 @@ def fit(project):
             combined.append(original[:count])
             inputs.append(directory / "original.wav")
             continue
-        bed, rate = sf.read(
-            directory / "stems/background.wav", dtype="float32", always_2d=True
-        )
-        speech, speech_rate = sf.read(
-            directory / "stems/speech.wav", dtype="float32", always_2d=True
-        )
+        bed_path, reference_path = postproduction.stems(project, scene)
+        bed, rate = sf.read(bed_path, dtype="float32", always_2d=True)
+        speech, speech_rate = sf.read(reference_path, dtype="float32", always_2d=True)
         need(
             rate == speech_rate == RATE
             and bed.shape[1] == speech.shape[1] == 2
             and len(bed) == len(speech) == count,
             "Stem format/duration mismatch",
         )
-        inputs += [directory / "stems/background.wav", directory / "stems/speech.wav"]
+        inputs += [bed_path, reference_path]
         selected = [l for l in script["lines"] if l["scene"] == scene["id"]]
         dialog = np.zeros((count, 2), dtype="float32")
         for index, line in enumerate(selected):
@@ -210,15 +216,15 @@ def fit(project):
         "mix",
         inputs,
         [master, project.work / "timeline.json", project.work / "timing-analysis.json"],
-        {"max_tempo": MAX_TEMPO},
+        mix_settings(project),
     )
     print(f"Fitted {len(records)} performances; Indonesian-only master ready.")
 
 
 def require_mix(project):
     require_takes(project)
-    project.require("separate")
-    project.require("mix", {"max_tempo": MAX_TEMPO})
+    postproduction.require(project)
+    project.require("mix", mix_settings(project))
     need(
         read(project.work / "timing-analysis.json")["passed"],
         "Unresolved timing problems",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage-by-stage Japanese → Bahasa Indonesia dubbing. No implicit paid 'all'."""
+"""Stage-by-stage Japanese to Bahasa Indonesia dubbing. No implicit paid 'all'."""
 
 from __future__ import annotations
 import argparse
@@ -14,7 +14,7 @@ from dubber.providers import Pending
 
 def status(project):
     checks = {}
-    for stage in [
+    stages = [
         "prepare",
         "transcribe",
         "review",
@@ -22,7 +22,12 @@ def status(project):
         "voices",
         "mix",
         "render",
-    ]:
+    ]
+    if project.config.get("postprocess"):
+        stages.insert(stages.index("mix"), "refine")
+    if (project.work / "stages/compact.json").exists():
+        stages.append("compact")
+    for stage in stages:
         if not (project.work / "stages" / (stage + ".json")).exists():
             checks[stage] = "missing"
             continue
@@ -36,6 +41,14 @@ def status(project):
                 from dubber.voices import require_takes
 
                 require_takes(project)
+            elif stage == "refine":
+                from dubber.postproduction import require
+
+                require(project)
+            elif stage == "compact":
+                from dubber.media import require_compact
+
+                require_compact(project)
             elif stage in {"mix", "render"}:
                 from dubber.audio import require_mix
 
@@ -122,6 +135,12 @@ def main(argv=None):
     init.add_argument("--slug", required=True)
     init.add_argument("--start", type=float, required=True)
     init.add_argument("--end", type=float, required=True)
+    condition = commands.add_parser(
+        "condition-source",
+        help="Preserve an audio tail by losslessly holding the final picture",
+    )
+    condition.add_argument("--source", required=True)
+    condition.add_argument("--output", required=True)
     commands.add_parser("doctor")
     commands.add_parser("status")
     commands.add_parser("prepare")
@@ -135,18 +154,40 @@ def main(argv=None):
     commands.add_parser("review").add_argument("--note", required=True)
     voices = commands.add_parser("voices")
     voices.add_argument("--submit", action="store_true")
+    reuse = commands.add_parser(
+        "reuse-voices",
+        help="Import exact completed voice requests from another local project",
+    )
+    reuse.add_argument("--from-config", required=True)
     setup = commands.add_parser("setup-separator")
     setup.add_argument("--no-download", action="store_true")
     commands.add_parser("separate")
+    commands.add_parser(
+        "setup-cleanup", help="Download and verify the optional residual-vocal model"
+    )
+    commands.add_parser(
+        "refine",
+        help="Build derived M&E and level references from an evidenced postprocess plan",
+    )
     commands.add_parser("fit")
     commands.add_parser("render").add_argument("--overwrite", action="store_true")
     commands.add_parser("verify")
+    compact = commands.add_parser(
+        "compact", help="Make a smaller 480p copy, preserving the existing dub audio"
+    )
+    compact.add_argument("--output")
+    compact.add_argument("--overwrite", action="store_true")
     qa = commands.add_parser("qa")
     qa.add_argument("--start", type=float, default=0)
     qa.add_argument("--seconds", type=float, default=40)
     qa.add_argument("--submit", action="store_true")
     qa.add_argument("--background-scene")
     args = parser.parse_args(argv)
+    if args.command == "condition-source":
+        from dubber.media import condition
+
+        condition(ROOT / args.source, ROOT / args.output)
+        return 0
     if args.command == "init":
         safe_id(args.slug)
         path = (
@@ -202,6 +243,10 @@ def main(argv=None):
         from dubber.voices import generate
 
         generate(project, submit=args.submit)
+    elif args.command == "reuse-voices":
+        from dubber.voices import reuse
+
+        reuse(project, Project(args.from_config))
     elif args.command in {"setup-separator", "separate"}:
         from dubber import separation
 
@@ -209,6 +254,13 @@ def main(argv=None):
             separation.setup(project, download=not args.no_download)
         else:
             separation.separate(project)
+    elif args.command in {"setup-cleanup", "refine"}:
+        from dubber import postproduction
+
+        if args.command == "setup-cleanup":
+            postproduction.setup(project)
+        else:
+            postproduction.refine(project)
     elif args.command == "fit":
         from dubber.audio import fit
 
@@ -220,6 +272,10 @@ def main(argv=None):
             render.render(project, overwrite=args.overwrite)
         else:
             print(json.dumps(render.verify(project), indent=2))
+    elif args.command == "compact":
+        from dubber.media import compact
+
+        compact(project, args.output, args.overwrite)
     elif args.command == "qa":
         from dubber.qa import check
 

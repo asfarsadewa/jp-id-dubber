@@ -23,6 +23,10 @@ VOICES = [
     "Puck",
     "Iapetus",
     "Alnilam",
+    "Kore",
+    "Zephyr",
+    "Algieba",
+    "Umbriel",
 ]
 
 
