@@ -68,7 +68,7 @@ python tools/dub.py --config local/episode-01.json refine
 python tools/dub.py --config local/episode-01.json fit
 ```
 
-Raw `stems/speech.wav`, `music.wav`, `sfx.wav` and `background.wav` stay intact. Derived files are in `stems/refined/`. The background is repaired music plus original effects. `speech-reference.wav` contains original speech plus the removed music components; it is used **only to measure replacement voice levels**, never as an audible original-language layer. This prevents attack calls misclassified as music from producing nearly silent replacement voices.
+Raw `stems/speech.wav`, `music.wav`, `sfx.wav` and `background.wav` stay intact. Already postprocessed separation markers are rejected; restore raw separation in a separate working project while retaining existing voices and exports. Derived files are in `stems/refined/`. The background is repaired music plus original effects. `speech-reference.wav` contains original speech plus the removed music components; it is used **only to measure replacement voice levels**, never as an audible original-language layer. This prevents attack calls misclassified as music from producing nearly silent replacement voices.
 
 The refinement seal binds raw stems, source units, corrections, model identity and plan. Plan, source or artifact changes block mixing until refinement is refreshed. Removing a plan also invalidates its old mix. Source component sums are checked; music outside the declared windows and all raw effects are preserved. Songs remain separate passthrough scenes.
 

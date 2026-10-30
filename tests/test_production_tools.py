@@ -91,6 +91,37 @@ def raw_stems(project, weak_speech=False):
 
 
 class StemRefinement(unittest.TestCase):
+    def test_already_processed_stems_cannot_be_refined_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = make_project(Path(tmp))
+            raw_stems(p)
+            folder = p.folder(p.scenes[0]) / "stems"
+            write(
+                folder / "separation.json",
+                {"spec": {"adapter": "already-postprocessed"}},
+            )
+            p.config["postprocess"] = {
+                "scenes": [
+                    {
+                        "id": "dialogue",
+                        "repairs": [
+                            {
+                                "start": 0.8,
+                                "end": 1.2,
+                                "donor_start": 2.0,
+                                "reason": "Fixture",
+                                "evidence": "Fixture",
+                            }
+                        ],
+                    }
+                ]
+            }
+            before = sha(folder / "background.wav")
+            with self.assertRaisesRegex(ValueError, "requires raw Bandit stems"):
+                post.refine(p)
+            self.assertEqual(sha(folder / "background.wav"), before)
+            self.assertFalse((folder / "refined").exists())
+
     def test_cleanup_cache_locality_level_reference_and_mix_invalidation(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = make_project(Path(tmp))

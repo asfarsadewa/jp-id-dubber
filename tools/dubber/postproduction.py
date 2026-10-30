@@ -276,6 +276,14 @@ def refine(project):
         )
         folder = project.folder(scene)
         raw = folder / "stems"
+        separation_marker = raw / "separation.json"
+        if separation_marker.exists():
+            need(
+                read(separation_marker).get("spec", {}).get("adapter")
+                == "music+sfx-v1",
+                "Refinement requires raw Bandit stems; these estimates were already postprocessed or use an unsupported adapter. Restore raw separation in a separate working project and retain existing takes/exports.",
+            )
+            inputs.append(separation_marker)
         arrays = {}
         for name in ("speech", "music", "sfx"):
             path = raw / (name + ".wav")
